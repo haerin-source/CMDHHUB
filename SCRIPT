@@ -4225,8 +4225,9 @@ local function hasHunt(mode)
     return false
 end
 
+local AIR_SKIP_Y = 10 -- studs above floor/player → ignore (no Y chase)
+
 local function groundYAt(xz)
-    -- ray down for floor; fallback to current HRP Y
     local hrp = select(1, getHRP())
     local fallback = hrp and hrp.Position.Y or xz.Y
     local origin = Vector3.new(xz.X, (hrp and math.max(hrp.Position.Y, xz.Y) or xz.Y) + 80, xz.Z)
@@ -4234,34 +4235,48 @@ local function groundYAt(xz)
         return workspace:Raycast(origin, Vector3.new(0, -400, 0))
     end)
     if ok and res then
-        return res.Position.Y + 3 -- stand height
+        return res.Position.Y + 3
     end
     return fallback
 end
 
+-- true only if mob is near the floor (or near our Y) — airborne spawns skipped
+local function isMobOnGround(root)
+    if not root then return false end
+    local pos = root.Position
+    local gy = groundYAt(pos)
+    if pos.Y > gy + AIR_SKIP_Y then
+        return false
+    end
+    local hrp = select(1, getHRP())
+    if hrp and (pos.Y - hrp.Position.Y) > AIR_SKIP_Y then
+        return false
+    end
+    return true
+end
+
 local function attackOffsetPos(targetRoot)
     if not targetRoot then return nil end
-    -- Behind on XZ only — never climb to airborne spawns (kick magnet)
+    if not isMobOnGround(targetRoot) then return nil end
     local look = targetRoot.CFrame.LookVector
     local pos = targetRoot.Position
-    local behind = pos - Vector3.new(look.X, 0, look.Z).Unit * (atkBehind or 4)
-    if behind ~= behind then -- NaN if look flat zero
+    local flat = Vector3.new(look.X, 0, look.Z)
+    local behind
+    if flat.Magnitude > 0.05 then
+        behind = pos - flat.Unit * (atkBehind or 4)
+    else
         behind = pos - Vector3.new(0, 0, atkBehind or 4)
     end
     local gy = groundYAt(behind)
-    -- if mob is high above floor, stay on ground under them
-    local y = gy
-    if pos.Y <= gy + 10 then
-        y = math.min(pos.Y, gy + 4)
-    end
-    return Vector3.new(behind.X, y, behind.Z)
+    -- force destination Y to ground only — zero vertical chase
+    return Vector3.new(behind.X, gy, behind.Z)
 end
 
 local function approachMob(targetRoot)
     if not targetRoot then return end
+    if not isMobOnGround(targetRoot) then return end
     local dest = attackOffsetPos(targetRoot)
     if not dest then return end
-    -- face the mob's horizontal position (not straight up into the sky)
     local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
     cframeFlyTo(dest, lookTarget)
 end
@@ -4307,6 +4322,7 @@ local function farmOne(model)
     if not hrp or not hum then return end
     while (farmToggle or raidFarmOn) and hum.Parent and hum.Health > 0 do
         if not farmToggle and not raidFarmOn then break end
+        if not isMobOnGround(hrp) then break end -- stop if target leaves the ground
         approachMob(hrp)
         -- keep facing target on ground plane while swinging
         local my = select(1, getHRP())
@@ -4332,7 +4348,7 @@ local function pickPriorityTarget()
             if child.Name == mobName and not isPlayerChar(child) then
                 local hum = child:FindFirstChildOfClass("Humanoid")
                 local root = child:FindFirstChild("HumanoidRootPart")
-                if hum and root and hum.Health > 0 then
+                if hum and root and hum.Health > 0 and isMobOnGround(root) then
                     local d = 0
                     if myHrp then
                         d = (myHrp.Position - root.Position).Magnitude
@@ -4872,7 +4888,7 @@ local function raidPickTarget()
             if not isPlayerChar(m) and mobNameMatch(m.Name, aliases) then
                 local hum = m:FindFirstChildOfClass("Humanoid")
                 local root = m:FindFirstChild("HumanoidRootPart")
-                if hum and root and hum.Health > 0 then
+                if hum and root and hum.Health > 0 and isMobOnGround(root) then
                     local d = 0
                     if my then d = (my.Position - root.Position).Magnitude end
                     if d < bestD then
