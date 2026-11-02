@@ -8,6 +8,17 @@ if game.PlaceId ~= PLACE_ID then
     return
 end
 
+-- Single-instance: if already running, kill the live copy first then continue
+do
+    local g = (type(getgenv) == "function" and getgenv()) or _G
+    if g.CMDH_DEVILHEART_RUNNING and type(g.DevilHeartUnload) == "function" then
+        warn("[CMDH] previous instance live — unloading it")
+        pcall(g.DevilHeartUnload)
+        task.wait(0.35)
+    end
+    g.CMDH_DEVILHEART_RUNNING = true
+end
+
 -- Persist script URL for hop re-exec — always prefer fixed raw URL
 local FIXED_SCRIPT_URL = "https://raw.githubusercontent.com/haerin-source/CMDHHUB/main/SCRIPT"
 local function getQueueUrl()
@@ -3597,7 +3608,6 @@ local Tabs = {
     Server = Window:AddTab("Server"),
     Codes = Window:AddTab("Codes"),
     Farm = Window:AddTab("Farm"),
-    Player = Window:AddTab("Player"),
     Settings = Window:AddTab("Settings"),
 }
 
@@ -3606,13 +3616,10 @@ local HeartGroup = Tabs.Heart:AddLeftGroupbox("Status")
 local PlayerESPGroup = Tabs.ESP:AddLeftGroupbox("Player ESP")
 local FiendESPGroup = Tabs.ESP:AddRightGroupbox("Fiend ESP")
 local DevilESPGroup = Tabs.ESP:AddLeftGroupbox("Devil ESP")
-local NpcESPGroup = Tabs.ESP:AddRightGroupbox("NPC ESP")
-local RaidNpcESPGroup = Tabs.ESP:AddLeftGroupbox("Raid NPC ESP")
 local HopGroup = Tabs.Server:AddLeftGroupbox("Server Hop")
 local YenCodeGroup = Tabs.Codes:AddLeftGroupbox("Yen Codes")
 local MobFarmGroup = Tabs.Farm:AddRightGroupbox("Farm")
 local RaidFarmGroup = Tabs.Farm:AddLeftGroupbox("Raid")
-local PlayerGroup = Tabs.Player:AddLeftGroupbox("Movement")
 
 local ExpCodeGroup = Tabs.Codes:AddRightGroupbox("EXP Codes")
 local BulletCodeGroup = Tabs.Codes:AddLeftGroupbox("Bullet Codes")
@@ -3892,114 +3899,6 @@ DevilESPGroup:AddToggle("DevilESP", {
 })
 DevilESPGroup:AddLabel("White normal / Yellow mutation")
 
-----------------------------------------------------------------
--- NPC ESP (all living non-player) + Raid NPC ESP
-----------------------------------------------------------------
-local npcEspOn, raidNpcEspOn = false, false
-local npcMap, raidNpcMap = {}, {}
-
-local function addNpcGeneric(model, map, filterFn)
-    if not model:IsA("Model") or map[model] then return end
-    if Players:GetPlayerFromCharacter(model) then return end
-    if filterFn and not filterFn(model) then return end
-    local hum = model:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return end
-    local col = COLOR_NPC
-    local e = makeLabel(model, col)
-    if e then map[model] = e end
-end
-
-local RAID_NPC_NAMES = {
-    ["Crawler Zombie"] = true,
-    ["Tank Zombie"] = true,
-    ["Zombie"] = true,
-    ["Zombie Devil"] = true,
-}
-
-local function isRaidNpc(model)
-    return RAID_NPC_NAMES[model.Name] == true
-end
-
-task.spawn(function()
-    while not unloaded do
-        if npcEspOn then
-            local lr = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-            for m, e in pairs(npcMap) do
-                if not m.Parent or not e.humanoid or not e.humanoid.Parent then
-                    destroyEntry(e); npcMap[m] = nil
-                else
-                    local dist = 0
-                    local nr = m:FindFirstChild("HumanoidRootPart")
-                    if lr and nr then dist = math.floor((lr.Position - nr.Position).Magnitude) end
-                    e.label.Text = string.format("%s\n%.0f / %.0f | %dm", m.Name, e.humanoid.Health, e.humanoid.MaxHealth, dist)
-                end
-            end
-        end
-        if raidNpcEspOn then
-            local lr = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-            for m, e in pairs(raidNpcMap) do
-                if not m.Parent or not e.humanoid or not e.humanoid.Parent then
-                    destroyEntry(e); raidNpcMap[m] = nil
-                else
-                    local dist = 0
-                    local nr = m:FindFirstChild("HumanoidRootPart")
-                    if lr and nr then dist = math.floor((lr.Position - nr.Position).Magnitude) end
-                    e.label.Text = string.format("%s\n%.0f / %.0f | %dm", m.Name, e.humanoid.Health, e.humanoid.MaxHealth, dist)
-                end
-            end
-        end
-        task.wait(0.2)
-    end
-end)
-
-NpcESPGroup:AddToggle("NpcESP", {
-    Text = "NPC ESP",
-    Default = false,
-    Callback = function(v)
-        npcEspOn = v
-        if not v then clearMap(npcMap) return end
-        task.spawn(function()
-            while npcEspOn and not unloaded do
-                local liv = Workspace:FindFirstChild("Living")
-                if liv then
-                    for _, m in ipairs(liv:GetChildren()) do
-                        addNpcGeneric(m, npcMap, function(mm)
-                            -- skip pure player models; allow all other living
-                            return not Players:GetPlayerFromCharacter(mm)
-                        end)
-                    end
-                end
-                task.wait(1)
-            end
-            clearMap(npcMap)
-        end)
-    end,
-})
-NpcESPGroup:AddLabel("All living non-player NPCs")
-
-RaidNpcESPGroup:AddToggle("RaidNpcESP", {
-    Text = "Raid NPC ESP",
-    Default = false,
-    Callback = function(v)
-        raidNpcEspOn = v
-        if not v then clearMap(raidNpcMap) return end
-        task.spawn(function()
-            while raidNpcEspOn and not unloaded do
-                local liv = Workspace:FindFirstChild("Living")
-                if liv then
-                    for _, m in ipairs(liv:GetChildren()) do
-                        addNpcGeneric(m, raidNpcMap, isRaidNpc)
-                    end
-                end
-                task.wait(1)
-            end
-            clearMap(raidNpcMap)
-        end)
-    end,
-})
-RaidNpcESPGroup:AddLabel("Crawler / Tank / Zombie / Zombie Devil")
-
-
 -- keep hub combined NPC ESP off (we use split)
 if _G.NPCEspAPI and _G.NPCEspAPI.SetEnabled then
     _G.NPCEspAPI.SetEnabled(false)
@@ -4023,51 +3922,114 @@ local function fetchServers(cursor)
     return data
 end
 
-local function serverHop(preferEmpty)
+local function collectCandidates(pagesMax)
+    local cursor, candidates, pages = nil, {}, 0
+    pagesMax = pagesMax or 8
+    while pages < pagesMax and not unloaded do
+        local data = fetchServers(cursor)
+        if not data or type(data.data) ~= "table" then break end
+        for _, srv in ipairs(data.data) do
+            if type(srv) == "table" and type(srv.id) == "string" and srv.id ~= "" and srv.id ~= JobId
+                and type(srv.playing) == "number" and type(srv.maxPlayers) == "number"
+                and srv.playing < srv.maxPlayers
+                and srv.playing >= hopMinPlayers and srv.playing <= hopMaxPlayers then
+                table.insert(candidates, srv)
+            end
+        end
+        cursor = data.nextPageCursor
+        pages = pages + 1
+        if not cursor or cursor == "" then break end
+        task.wait(0.12)
+    end
+    return candidates
+end
+
+-- mode: "random" | "lowest" | "ping"
+local function serverHop(mode)
     if hopInProgress or unloaded then return end
     hopInProgress = true
-    notify("Hop", "Searching...")
+    mode = mode or "random"
+    notify("Hop", "Searching (" .. mode .. ")...")
     task.spawn(function()
-        local cursor, candidates, pages = nil, {}, 0
-        while pages < 5 and not unloaded do
-            local data = fetchServers(cursor)
-            if not data or type(data.data) ~= "table" then break end
-            for _, s in ipairs(data.data) do
-                if type(s) == "table" and s.id and s.id ~= JobId
-                    and type(s.playing) == "number" and type(s.maxPlayers) == "number"
-                    and s.playing < s.maxPlayers
-                    and s.playing >= hopMinPlayers and s.playing <= hopMaxPlayers then
-                    table.insert(candidates, s)
-                end
-            end
-            cursor = data.nextPageCursor
-            pages += 1
-            if not cursor or cursor == "" then break end
-            task.wait(0.15)
-        end
+        local candidates = collectCandidates(8)
         if #candidates == 0 then
-            notify("Hop", "No server")
+            notify("Hop", "No other server in range")
             hopInProgress = false
             return
         end
-        if preferEmpty then
-            table.sort(candidates, function(a, b) return a.playing < b.playing end)
+        if mode == "lowest" then
+            table.sort(candidates, function(a, b)
+                if a.playing == b.playing then
+                    return (a.ping or 9999) < (b.ping or 9999)
+                end
+                return a.playing < b.playing
+            end)
+        elseif mode == "ping" then
+            table.sort(candidates, function(a, b)
+                local pa = (type(a.ping) == "number" and a.ping) or 9999
+                local pb = (type(b.ping) == "number" and b.ping) or 9999
+                if pa == pb then return a.playing < b.playing end
+                return pa < pb
+            end)
         else
+            -- random shuffle, never current (already filtered)
             for i = #candidates, 2, -1 do
                 local j = math.random(i)
                 candidates[i], candidates[j] = candidates[j], candidates[i]
             end
         end
-        local t = candidates[1]
-        pcall(function() TeleportService:TeleportToPlaceInstance(PlaceId, t.id, Player) end)
+        -- try up to 5 different job ids (skip if somehow current)
+        local tried = 0
+        for _, t in ipairs(candidates) do
+            if t.id ~= JobId then
+                tried = tried + 1
+                notify("Hop", string.format("%s → %d/%d pl | ping %s", mode, t.playing, t.maxPlayers, tostring(t.ping or "?")))
+                local ok = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(PlaceId, t.id, Player)
+                end)
+                if ok then
+                    hopInProgress = false
+                    return
+                end
+                if tried >= 5 then break end
+                task.wait(0.4)
+            end
+        end
+        notify("Hop", "Teleport failed")
         hopInProgress = false
     end)
 end
 
+-- Even-hour minus ~3 min window (01:57, 03:57, 05:57 ... local clock)
+local function inEvenHourWindow()
+    local t = os.date("*t")
+    local h, m = t.hour, t.min
+    -- minutes 54..59 on odd hours (1,3,5,...,23) → 3 min before even hour
+    if (h % 2 == 1) and m >= 54 then
+        return true
+    end
+    return false
+end
+
+local function hopEvenHourWindow()
+    if hopInProgress or unloaded then return end
+    if not inEvenHourWindow() then
+        local t = os.date("*t")
+        notify("Hop", string.format("Window is odd-hour :54-:59 (now %02d:%02d) — hopping anyway to other server", t.hour, t.min))
+    else
+        notify("Hop", "In even-hour -3m window")
+    end
+    serverHop("lowest")
+end
+
 HopGroup:AddSlider("HopMin", { Text = "Min Players", Default = 1, Min = 0, Max = 30, Rounding = 0, Callback = function(v) hopMinPlayers = v end })
 HopGroup:AddSlider("HopMax", { Text = "Max Players", Default = 20, Min = 1, Max = 50, Rounding = 0, Callback = function(v) hopMaxPlayers = v end })
-HopGroup:AddButton({ Text = "Server Hop (Random)", Func = function() serverHop(false) end })
-HopGroup:AddButton({ Text = "Server Hop (Lowest)", Func = function() serverHop(true) end })
+HopGroup:AddButton({ Text = "Server Hop (Random)", Func = function() serverHop("random") end })
+HopGroup:AddButton({ Text = "Server Hop (Lowest Players)", Func = function() serverHop("lowest") end })
+HopGroup:AddButton({ Text = "Server Hop (Lowest Ping)", Func = function() serverHop("ping") end })
+HopGroup:AddButton({ Text = "Hop Even-Hour -3m Window", Func = function() hopEvenHourWindow() end })
+HopGroup:AddLabel("Always skips current JobId · retries other servers")
+HopGroup:AddLabel("Even-hour window: 1:54-1:59, 3:54-3:59, ...")
 HopGroup:AddToggle("AutoHop", {
     Text = "Auto Hop if No Heart",
     Default = false,
@@ -4078,7 +4040,7 @@ HopGroup:AddToggle("AutoHop", {
             while autoHopNoHeart and not unloaded do
                 task.wait(8)
                 if autoHopNoHeart and not hopInProgress and not heartOk() then
-                    serverHop(true)
+                    serverHop("lowest")
                 end
             end
         end)
@@ -4140,98 +4102,6 @@ AfkGroup:AddToggle("AntiAFK", {
 
 
 ----------------------------------------------------------------
--- Player movement (WalkSpeed / JumpPower / NoClip)
-----------------------------------------------------------------
-local walkSpeedWanted = 16
-local jumpPowerWanted = 50 -- Roblox default ~50
-local jumpBoost = 0
-local noclipOn = false
-local noclipConn = nil
-local speedConn = nil
-
-local function applyMovement()
-    local char = Player.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    pcall(function()
-        hum.WalkSpeed = walkSpeedWanted
-        -- JumpPower / JumpHeight compatibility
-        if hum.UseJumpPower ~= nil then
-            hum.UseJumpPower = true
-        end
-        hum.JumpPower = jumpPowerWanted + jumpBoost
-    end)
-end
-
-local function setNoclip(on)
-    noclipOn = on
-    if noclipConn then
-        pcall(function() noclipConn:Disconnect() end)
-        noclipConn = nil
-    end
-    if not on then
-        local char = Player.Character
-        if char then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    pcall(function() part.CanCollide = true end)
-                end
-            end
-        end
-        return
-    end
-    noclipConn = RunService.Stepped:Connect(function()
-        if not noclipOn or unloaded then return end
-        local char = Player.Character
-        if not char then return end
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
-        end
-    end)
-end
-
-Player.CharacterAdded:Connect(function()
-    task.wait(0.3)
-    applyMovement()
-    if noclipOn then setNoclip(true) end
-end)
-
-PlayerGroup:AddSlider("WalkSpeed", {
-    Text = "Walk Speed",
-    Default = 16,
-    Min = 16,
-    Max = 50,
-    Rounding = 0,
-    Callback = function(v)
-        walkSpeedWanted = v
-        applyMovement()
-    end,
-})
-PlayerGroup:AddSlider("JumpBoost", {
-    Text = "Jump Boost",
-    Default = 0,
-    Min = 0,
-    Max = 50,
-    Rounding = 0,
-    Callback = function(v)
-        jumpBoost = v
-        applyMovement()
-    end,
-})
-PlayerGroup:AddToggle("NoClip", {
-    Text = "NoClip",
-    Default = false,
-    Callback = function(v)
-        setNoclip(v)
-        notify("NoClip", v and "ON" or "OFF")
-    end,
-})
-PlayerGroup:AddLabel("Walk 16-50 · Jump boost 0-50 · NoClip hard on/off")
-
-----------------------------------------------------------------
 -- Unload
 ----------------------------------------------------------------
 local inputConn = UserInputService.InputBegan:Connect(function(input, processed)
@@ -4245,15 +4115,20 @@ end)
 local function unloadScript()
     if unloaded then return end
     unloaded = true
+    farmToggle = false
+    raidFarmOn = false
     fiendEspOn, devilEspOn = false, false
-    clearMap(fiendMap)
-    clearMap(devilMap)
+    pcall(function() clearMap(fiendMap) end)
+    pcall(function() clearMap(devilMap) end)
     if _G.PlayerEspAPI then pcall(function() _G.PlayerEspAPI.SetEnabled(false) end) end
     if _G.NPCEspAPI then pcall(function() _G.NPCEspAPI.SetEnabled(false) end) end
     if _G.AutoParryAPI then pcall(function() _G.AutoParryAPI.SetAutoParry(false) end) end
     pcall(function() inputConn:Disconnect() end)
-    if type(getgenv) == "function" then getgenv().DevilHeartUnload = nil end
-    Library:Unload()
+    if type(getgenv) == "function" then
+        getgenv().DevilHeartUnload = nil
+        getgenv().CMDH_DEVILHEART_RUNNING = false
+    end
+    pcall(function() Library:Unload() end)
 end
 
 if type(getgenv) == "function" then getgenv().DevilHeartUnload = unloadScript end
@@ -4347,10 +4222,7 @@ local function cframeFlyTo(target)
 end
 
 local function pathFlyTo(targetPos)
-    -- no wall pathfind: go high then to point (avoids knockback stuck in geometry)
-    local peak = Vector3.new(targetPos.X, math.max(targetPos.Y + skyHover, targetPos.Y + 20), targetPos.Z)
-    cframeFlyTo(peak)
-    task.wait(skyWait)
+    -- direct fly, no sky hover
     cframeFlyTo(targetPos)
 end
 
@@ -4372,9 +4244,7 @@ end
 
 local function approachMob(targetRoot)
     if not targetRoot then return end
-    local peak = targetRoot.Position + Vector3.new(0, skyHover, 0)
-    cframeFlyTo(peak)
-    task.wait(skyWait)
+    -- direct behind the mob — no sky hover / wait
     local dest = attackOffsetPos(targetRoot)
     if dest then
         cframeFlyTo(dest)
@@ -4420,7 +4290,7 @@ local function farmOne(model)
     local hrp = model:FindFirstChild("HumanoidRootPart")
     local hum = model:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
-    while (farmToggle or raidFarmOn) and not raidHealing and hum.Parent and hum.Health > 0 do
+    while (farmToggle or raidFarmOn) and hum.Parent and hum.Health > 0 do
         if not farmToggle and not raidFarmOn then break end
         approachMob(hrp)
         doAttack()
@@ -4430,16 +4300,27 @@ end
 
 local function pickPriorityTarget()
     local living = workspace:FindFirstChild("Living")
+    local myHrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
     if not living or #selectedMobs == 0 then return nil end
+    -- priority name first; within same name pick nearest
     for _, mobName in ipairs(selectedMobs) do
+        local best, bestD = nil, math.huge
         for _, child in ipairs(living:GetChildren()) do
             if child.Name == mobName and not isPlayerChar(child) then
                 local hum = child:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health > 0 then
-                    return child
+                local root = child:FindFirstChild("HumanoidRootPart")
+                if hum and root and hum.Health > 0 then
+                    local d = 0
+                    if myHrp then
+                        d = (myHrp.Position - root.Position).Magnitude
+                    end
+                    if d < bestD then
+                        best, bestD = child, d
+                    end
                 end
             end
         end
+        if best then return best end
     end
     return nil
 end
@@ -4563,23 +4444,7 @@ MobFarmGroup:AddSlider("AtkBehind", {
         pcall(function() huntLabel:SetText(huntText()) end)
     end,
 })
-MobFarmGroup:AddSlider("SkyHover", {
-    Text = "Hover Height (studs)",
-    Default = 28,
-    Min = 10,
-    Max = 80,
-    Rounding = 0,
-    Callback = function(v) skyHover = v end,
-})
-MobFarmGroup:AddSlider("SkyWait", {
-    Text = "Hover Wait (0.1s)",
-    Default = 4,
-    Min = 1,
-    Max = 20,
-    Rounding = 0,
-    Callback = function(v) skyWait = v / 10 end,
-})
-MobFarmGroup:AddLabel("Behind-only attack · shared with Raid")
+MobFarmGroup:AddLabel("Behind-only · nearest matching mob · no hover")
 
 MobFarmGroup:AddButton({
     Text = "Clear priority list",
@@ -4906,9 +4771,6 @@ task.defer(function()
         "PlayerESP",
         "FiendESP",
         "DevilESP",
-        "NpcESP",
-        "RaidNpcESP",
-        "NoClip",
         "AutoHop",
         "AntiAFK",
         "MobFarm",
@@ -4926,9 +4788,7 @@ end)
 ----------------------------------------------------------------
 -- Raid Farm: fixed 4 mobs, round priority, heal in air
 ----------------------------------------------------------------
-local raidHealGo = 30      -- % HP → go heal in air
-local raidHealBack = 80    -- % HP → resume farm
-local RAID_SKY = Vector3.new(1136, 800, -985)
+local RAID_SKY = Vector3.new(1136, 800, -985) -- unused (kept for compat)
 
 -- Always show these (even if not spawned)
 local RAID_MOBS_DISPLAY = {
@@ -5001,48 +4861,17 @@ local function raidPickTarget()
     return nil
 end
 
-local function raidGoHeal()
-    raidHealing = true
-    pcall(function()
-        pathFlyTo(RAID_SKY)
-    end)
-end
-
+-- Raid: pure kill loop, no air heal / no hover
 task.spawn(function()
     while not unloaded do
         if not raidFarmOn then
-            raidHealing = false
             task.wait(0.4)
         else
-            local hum = select(1, getMyHumanoid())
-            if hum and hum.MaxHealth > 0 then
-                local pct = (hum.Health / hum.MaxHealth) * 100
-                if pct <= raidHealGo then
-                    raidGoHeal()
-                    -- wait until healed
-                    while raidFarmOn and not unloaded do
-                        hum = select(1, getMyHumanoid())
-                        if not hum then break end
-                        local p2 = (hum.Health / math.max(hum.MaxHealth, 1)) * 100
-                        if p2 >= raidHealBack then
-                            raidHealing = false
-                            break
-                        end
-                        -- stay high
-                        local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-                        if hrp and hrp.Position.Y < RAID_SKY.Y - 50 then
-                            pcall(function() pathFlyTo(RAID_SKY) end)
-                        end
-                        task.wait(0.3)
-                    end
-                elseif not raidHealing then
-                    local target = raidPickTarget()
-                    if target then
-                        farmOne(target)
-                    end
-                end
+            local target = raidPickTarget()
+            if target then
+                farmOne(target)
             end
-            task.wait(0.2)
+            task.wait(0.15)
         end
     end
 end)
@@ -5060,34 +4889,12 @@ RaidFarmGroup:AddToggle("RaidFarm", {
     Default = false,
     Callback = function(v)
         raidFarmOn = v
-        if not v then raidHealing = false end
         notify("RaidFarm", v and "ON" or "OFF")
     end,
 })
 
-RaidFarmGroup:AddSlider("RaidHealGo", {
-    Text = "Heal when HP % ≤",
-    Default = 30,
-    Min = 5,
-    Max = 80,
-    Rounding = 0,
-    Callback = function(v)
-        raidHealGo = v
-    end,
-})
 
-RaidFarmGroup:AddSlider("RaidHealBack", {
-    Text = "Resume when HP % ≥",
-    Default = 80,
-    Min = 20,
-    Max = 100,
-    Rounding = 0,
-    Callback = function(v)
-        raidHealBack = v
-    end,
-})
 
-RaidFarmGroup:AddLabel("Low HP → air heal → resume farm")
 
 local function raidHuntText()
     return "Hunt: Behind only (" .. tostring(atkBehind) .. " studs)"
@@ -5113,23 +4920,7 @@ RaidFarmGroup:AddSlider("RaidAtkBehind", {
         end)
     end,
 })
-RaidFarmGroup:AddSlider("RaidSkyHover", {
-    Text = "Hover Height (studs)",
-    Default = 28,
-    Min = 10,
-    Max = 80,
-    Rounding = 0,
-    Callback = function(v) skyHover = v end,
-})
-RaidFarmGroup:AddSlider("RaidSkyWait", {
-    Text = "Hover Wait (0.1s)",
-    Default = 4,
-    Min = 1,
-    Max = 20,
-    Rounding = 0,
-    Callback = function(v) skyWait = v / 10 end,
-})
-RaidFarmGroup:AddLabel("Behind-only attack · shared with Farm")
+RaidFarmGroup:AddLabel("Behind-only · no hover · no air-heal")
 
 
 
