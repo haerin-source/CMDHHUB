@@ -8,8 +8,12 @@ if game.PlaceId ~= PLACE_ID then
     return
 end
 
--- Persist script URL for hop re-exec (set once, saved in config folder)
+-- Persist script URL for hop re-exec — always prefer fixed raw URL
+local FIXED_SCRIPT_URL = "https://raw.githubusercontent.com/haerin-source/CMDHHUB/main/SCRIPT"
 local function getQueueUrl()
+    if FIXED_SCRIPT_URL and FIXED_SCRIPT_URL ~= "" then
+        return FIXED_SCRIPT_URL
+    end
     if getgenv and getgenv().DevilHeartURL and getgenv().DevilHeartURL ~= "" then
         return getgenv().DevilHeartURL
     end
@@ -3593,6 +3597,7 @@ local Tabs = {
     Server = Window:AddTab("Server"),
     Codes = Window:AddTab("Codes"),
     Farm = Window:AddTab("Farm"),
+    Player = Window:AddTab("Player"),
     Settings = Window:AddTab("Settings"),
 }
 
@@ -3601,12 +3606,21 @@ local HeartGroup = Tabs.Heart:AddLeftGroupbox("Status")
 local PlayerESPGroup = Tabs.ESP:AddLeftGroupbox("Player ESP")
 local FiendESPGroup = Tabs.ESP:AddRightGroupbox("Fiend ESP")
 local DevilESPGroup = Tabs.ESP:AddLeftGroupbox("Devil ESP")
+local NpcESPGroup = Tabs.ESP:AddRightGroupbox("NPC ESP")
+local RaidNpcESPGroup = Tabs.ESP:AddLeftGroupbox("Raid NPC ESP")
 local HopGroup = Tabs.Server:AddLeftGroupbox("Server Hop")
 local YenCodeGroup = Tabs.Codes:AddLeftGroupbox("Yen Codes")
 local MobFarmGroup = Tabs.Farm:AddRightGroupbox("Farm")
 local RaidFarmGroup = Tabs.Farm:AddLeftGroupbox("Raid")
+local PlayerGroup = Tabs.Player:AddLeftGroupbox("Movement")
 
 local ExpCodeGroup = Tabs.Codes:AddRightGroupbox("EXP Codes")
+local BulletCodeGroup = Tabs.Codes:AddLeftGroupbox("Bullet Codes")
+local AuraCodeGroup = Tabs.Codes:AddRightGroupbox("Aura Codes")
+local ContractCodeGroup = Tabs.Codes:AddLeftGroupbox("Contract Reset")
+local SkillCodeGroup = Tabs.Codes:AddRightGroupbox("Skill Point Reset")
+local HybridCodeGroup = Tabs.Codes:AddLeftGroupbox("Hybrid Reset")
+local FiendCodeGroup = Tabs.Codes:AddRightGroupbox("Fiend Reset")
 local AfkGroup = Tabs.Settings:AddRightGroupbox("AFK")
 local UnloadGroup = Tabs.Settings:AddLeftGroupbox("Script")
 
@@ -3878,6 +3892,114 @@ DevilESPGroup:AddToggle("DevilESP", {
 })
 DevilESPGroup:AddLabel("White normal / Yellow mutation")
 
+----------------------------------------------------------------
+-- NPC ESP (all living non-player) + Raid NPC ESP
+----------------------------------------------------------------
+local npcEspOn, raidNpcEspOn = false, false
+local npcMap, raidNpcMap = {}, {}
+
+local function addNpcGeneric(model, map, filterFn)
+    if not model:IsA("Model") or map[model] then return end
+    if Players:GetPlayerFromCharacter(model) then return end
+    if filterFn and not filterFn(model) then return end
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    local col = COLOR_NPC
+    local e = makeLabel(model, col)
+    if e then map[model] = e end
+end
+
+local RAID_NPC_NAMES = {
+    ["Crawler Zombie"] = true,
+    ["Tank Zombie"] = true,
+    ["Zombie"] = true,
+    ["Zombie Devil"] = true,
+}
+
+local function isRaidNpc(model)
+    return RAID_NPC_NAMES[model.Name] == true
+end
+
+task.spawn(function()
+    while not unloaded do
+        if npcEspOn then
+            local lr = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+            for m, e in pairs(npcMap) do
+                if not m.Parent or not e.humanoid or not e.humanoid.Parent then
+                    destroyEntry(e); npcMap[m] = nil
+                else
+                    local dist = 0
+                    local nr = m:FindFirstChild("HumanoidRootPart")
+                    if lr and nr then dist = math.floor((lr.Position - nr.Position).Magnitude) end
+                    e.label.Text = string.format("%s\n%.0f / %.0f | %dm", m.Name, e.humanoid.Health, e.humanoid.MaxHealth, dist)
+                end
+            end
+        end
+        if raidNpcEspOn then
+            local lr = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+            for m, e in pairs(raidNpcMap) do
+                if not m.Parent or not e.humanoid or not e.humanoid.Parent then
+                    destroyEntry(e); raidNpcMap[m] = nil
+                else
+                    local dist = 0
+                    local nr = m:FindFirstChild("HumanoidRootPart")
+                    if lr and nr then dist = math.floor((lr.Position - nr.Position).Magnitude) end
+                    e.label.Text = string.format("%s\n%.0f / %.0f | %dm", m.Name, e.humanoid.Health, e.humanoid.MaxHealth, dist)
+                end
+            end
+        end
+        task.wait(0.2)
+    end
+end)
+
+NpcESPGroup:AddToggle("NpcESP", {
+    Text = "NPC ESP",
+    Default = false,
+    Callback = function(v)
+        npcEspOn = v
+        if not v then clearMap(npcMap) return end
+        task.spawn(function()
+            while npcEspOn and not unloaded do
+                local liv = Workspace:FindFirstChild("Living")
+                if liv then
+                    for _, m in ipairs(liv:GetChildren()) do
+                        addNpcGeneric(m, npcMap, function(mm)
+                            -- skip pure player models; allow all other living
+                            return not Players:GetPlayerFromCharacter(mm)
+                        end)
+                    end
+                end
+                task.wait(1)
+            end
+            clearMap(npcMap)
+        end)
+    end,
+})
+NpcESPGroup:AddLabel("All living non-player NPCs")
+
+RaidNpcESPGroup:AddToggle("RaidNpcESP", {
+    Text = "Raid NPC ESP",
+    Default = false,
+    Callback = function(v)
+        raidNpcEspOn = v
+        if not v then clearMap(raidNpcMap) return end
+        task.spawn(function()
+            while raidNpcEspOn and not unloaded do
+                local liv = Workspace:FindFirstChild("Living")
+                if liv then
+                    for _, m in ipairs(liv:GetChildren()) do
+                        addNpcGeneric(m, raidNpcMap, isRaidNpc)
+                    end
+                end
+                task.wait(1)
+            end
+            clearMap(raidNpcMap)
+        end)
+    end,
+})
+RaidNpcESPGroup:AddLabel("Crawler / Tank / Zombie / Zombie Devil")
+
+
 -- keep hub combined NPC ESP off (we use split)
 if _G.NPCEspAPI and _G.NPCEspAPI.SetEnabled then
     _G.NPCEspAPI.SetEnabled(false)
@@ -3966,14 +4088,34 @@ HopGroup:AddToggle("AutoHop", {
 ----------------------------------------------------------------
 -- Codes
 ----------------------------------------------------------------
-local YEN = { "Sub2AKUMA", "Summer2026","INTHEHEIGHTS","Easter2026","28KBagsIntoTheDark","HappyHalloween","DayAndNight","CsmMovieRELEASE","sub2greky","Vibezyiscool","mertiscool","FreeLevelsPlox","LOVEKOREA","sub2vibezy" }
+local YEN = { "Sub2AKUMA", "Summer2026","INTHEHEIGHTS","Easter2026","28KBagsIntoTheDark","HappyHalloween","DayAndNight","CsmMovieRELEASE","sub2greky","Vibezyiscool","mertiscool","FreeLevelsPlox","LOVEKOREA","sub2vibezy", "!Code TheSpire2" }
 local EXP = { "SorryForNoUpdates","Progression","HolidaySeason2025","BlackFridayx2EXP","MAKIMARELEASE","LetsGetStarted","MyTimeToGrind","HappyHolidays" }
+local BULLET = { "Reloading!", "INEEDMOREBOULLETS!" }
+local AURA = { "FunnyAuraReRoll2026", "Soon2026AuraReRoll", "AuraReRollOctober", "ItsCalledAuraBruh" }
+local CONTRACT = { "ContractResetMe", "85KResetMyContracts", "Yo70KContractResetCode" }
+local SKILL = { "SPReset2026", "XMasSkillPointReset", "90KResetMySkillPoints", "OMeeGawd75KSkillPointResetCode", "NEWROKYONEWSKILLRESET" }
+local HYBRID = { "ResetMyHybridPLOX", "RemoveMyHybridTHX", "HybridReset2025" }
+local FIEND = { "FiendReset2025", "80KFiendReset" }
 local function copyCode(c)
     if setclipboard then setclipboard(c) elseif toclipboard then toclipboard(c) end
     notify("Codes", c)
 end
 for _, c in ipairs(YEN) do YenCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 for _, c in ipairs(EXP) do ExpCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(BULLET) do BulletCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(AURA) do AuraCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(CONTRACT) do ContractCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(SKILL) do SkillCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(HYBRID) do HybridCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(FIEND) do FiendCodeGroup:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+YenCodeGroup:AddLabel("Some codes may no longer redeem.")
+ExpCodeGroup:AddLabel("Some codes may no longer redeem.")
+BulletCodeGroup:AddLabel("Some codes may no longer redeem.")
+AuraCodeGroup:AddLabel("Some codes may no longer redeem.")
+ContractCodeGroup:AddLabel("Some codes may no longer redeem.")
+SkillCodeGroup:AddLabel("Some codes may no longer redeem.")
+HybridCodeGroup:AddLabel("Some codes may no longer redeem.")
+FiendCodeGroup:AddLabel("Some codes may no longer redeem.")
 
 ----------------------------------------------------------------
 -- AFK
@@ -3995,6 +4137,99 @@ AfkGroup:AddToggle("AntiAFK", {
         end)
     end,
 })
+
+
+----------------------------------------------------------------
+-- Player movement (WalkSpeed / JumpPower / NoClip)
+----------------------------------------------------------------
+local walkSpeedWanted = 16
+local jumpPowerWanted = 50 -- Roblox default ~50
+local jumpBoost = 0
+local noclipOn = false
+local noclipConn = nil
+local speedConn = nil
+
+local function applyMovement()
+    local char = Player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    pcall(function()
+        hum.WalkSpeed = walkSpeedWanted
+        -- JumpPower / JumpHeight compatibility
+        if hum.UseJumpPower ~= nil then
+            hum.UseJumpPower = true
+        end
+        hum.JumpPower = jumpPowerWanted + jumpBoost
+    end)
+end
+
+local function setNoclip(on)
+    noclipOn = on
+    if noclipConn then
+        pcall(function() noclipConn:Disconnect() end)
+        noclipConn = nil
+    end
+    if not on then
+        local char = Player.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    pcall(function() part.CanCollide = true end)
+                end
+            end
+        end
+        return
+    end
+    noclipConn = RunService.Stepped:Connect(function()
+        if not noclipOn or unloaded then return end
+        local char = Player.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+Player.CharacterAdded:Connect(function()
+    task.wait(0.3)
+    applyMovement()
+    if noclipOn then setNoclip(true) end
+end)
+
+PlayerGroup:AddSlider("WalkSpeed", {
+    Text = "Walk Speed",
+    Default = 16,
+    Min = 16,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(v)
+        walkSpeedWanted = v
+        applyMovement()
+    end,
+})
+PlayerGroup:AddSlider("JumpBoost", {
+    Text = "Jump Boost",
+    Default = 0,
+    Min = 0,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(v)
+        jumpBoost = v
+        applyMovement()
+    end,
+})
+PlayerGroup:AddToggle("NoClip", {
+    Text = "NoClip",
+    Default = false,
+    Callback = function(v)
+        setNoclip(v)
+        notify("NoClip", v and "ON" or "OFF")
+    end,
+})
+PlayerGroup:AddLabel("Walk 16-50 · Jump boost 0-50 · NoClip hard on/off")
 
 ----------------------------------------------------------------
 -- Unload
@@ -4065,14 +4300,14 @@ local farmToggle = false
 local raidFarmOn = false
 local raidHealing = false
 local selectedMobs = {} -- priority ordered: [1]=highest
-local MOVE_SPEED = 100 -- default speed
+local MOVE_SPEED = 150 -- default speed
 local atkBehind = 4
 local atkAbove = 3
 local atkBelow = 3
 local skyHover = 28
 local skyWait = 0.35
 -- hunt styles priority (click add/remove): "Behind", "Above", "Below"
-local huntModes = { "Behind" }
+local huntModes = { "Behind" } -- behind-only attack
 local busyQuestMove = false
 
 local function getHRP()
@@ -4128,22 +4363,10 @@ end
 
 local function attackOffsetPos(targetRoot)
     if not targetRoot then return nil end
+    -- Behind-only: stand behind the target facing them
     local look = targetRoot.CFrame.LookVector
     local pos = targetRoot.Position
-    local off = Vector3.zero
-    if hasHunt("Behind") then
-        off = off - look * atkBehind
-    end
-    if hasHunt("Above") then
-        off = off + Vector3.new(0, atkAbove, 0)
-    end
-    if hasHunt("Below") then
-        off = off - Vector3.new(0, atkBelow, 0)
-    end
-    -- if nothing selected, default slight above
-    if off.Magnitude < 0.05 then
-        off = Vector3.new(0, 3, 0)
-    end
+    local off = -look * (atkBehind or 4)
     return pos + off
 end
 
@@ -4311,74 +4534,34 @@ local mobDropdown = MobFarmGroup:AddDropdown("SelectMobs", {
 
 MobFarmGroup:AddSlider("FarmFlySpeed", {
     Text = "Fly Speed",
-    Default = 100,
+    Default = 150,
     Min = 30,
-    Max = 200,
+    Max = 350,
     Rounding = 0,
     Callback = function(v)
         MOVE_SPEED = v
     end,
 })
 local function huntText()
-    if #huntModes == 0 then return "Hunt: (none → default +3Y)" end
-    local parts = {}
-    for i, m in ipairs(huntModes) do
-        parts[#parts + 1] = i .. "." .. m
-    end
-    return "Hunt: " .. table.concat(parts, " > ")
+    return "Hunt: Behind only (" .. tostring(atkBehind) .. " studs)"
 end
 
 local huntLabel = MobFarmGroup:AddLabel(huntText())
 
-MobFarmGroup:AddDropdown("HuntModes", {
-    Values = { "Behind", "Above", "Below" },
-    Default = { Behind = true },
-    Multi = true,
-    Text = "Hunt style (click add/remove)",
-    Callback = function(v)
-        local set = {}
-        if type(v) == "table" then
-            for k, val in pairs(v) do
-                if type(k) == "string" and val then set[k] = true
-                elseif type(val) == "string" then set[val] = true end
-            end
-        end
-        local ordered = {}
-        for _, m in ipairs(huntModes) do
-            if set[m] then ordered[#ordered + 1] = m; set[m] = nil end
-        end
-        for _, m in ipairs({ "Behind", "Above", "Below" }) do
-            if set[m] then ordered[#ordered + 1] = m end
-        end
-        huntModes = ordered
-        pcall(function() huntLabel:SetText(huntText()) end)
-        notify("Hunt", huntText())
-    end,
-})
+-- Behind-only attack (Above/Below removed — hits from behind)
+huntModes = { "Behind" }
 
 MobFarmGroup:AddSlider("AtkBehind", {
-    Text = "Behind studs",
+    Text = "Behind Studs",
     Default = 4,
-    Min = 0,
-    Max = 20,
-    Rounding = 1,
-    Callback = function(v) atkBehind = v end,
-})
-MobFarmGroup:AddSlider("AtkAbove", {
-    Text = "Above studs",
-    Default = 3,
     Min = 0,
     Max = 25,
     Rounding = 1,
-    Callback = function(v) atkAbove = v end,
-})
-MobFarmGroup:AddSlider("AtkBelow", {
-    Text = "Below studs",
-    Default = 3,
-    Min = 0,
-    Max = 15,
-    Rounding = 1,
-    Callback = function(v) atkBelow = v end,
+    Callback = function(v)
+        atkBehind = v
+        huntModes = { "Behind" }
+        pcall(function() huntLabel:SetText(huntText()) end)
+    end,
 })
 MobFarmGroup:AddSlider("SkyHover", {
     Text = "Hover Height (studs)",
@@ -4396,7 +4579,7 @@ MobFarmGroup:AddSlider("SkyWait", {
     Rounding = 0,
     Callback = function(v) skyWait = v / 10 end,
 })
-MobFarmGroup:AddLabel("Applies to Raid too")
+MobFarmGroup:AddLabel("Behind-only attack · shared with Raid")
 
 MobFarmGroup:AddButton({
     Text = "Clear priority list",
@@ -4657,37 +4840,44 @@ do
         pcall(function() SaveManager:SetIgnoreIndexes({}) end)
         SaveManager:SetFolder("CMDHHub")
         SaveManager:BuildConfigSection(Tabs.Settings)
+        -- Always load last autoload config once on boot (raid/farm toggles etc.)
         pcall(function() SaveManager:LoadAutoloadConfig() end)
-        print("[CMDH] SaveManager ON — folder DevilHeart/")
+        -- Force-persist any live toggle/slider change so next session can load it
+        pcall(function()
+            if Library and Library.OnFlagChanged then
+                Library.OnFlagChanged = Library.OnFlagChanged -- keep
+            end
+            -- periodic auto-save of current config name if set
+            task.spawn(function()
+                while not unloaded do
+                    task.wait(8)
+                    pcall(function()
+                        if SaveManager.Save and SaveManager.GetConfigName then
+                            local name = SaveManager:GetConfigName()
+                            if name and name ~= "" then
+                                SaveManager:Save(name)
+                            elseif SaveManager.SaveAutoloadConfig then
+                                -- fallback: ensure autoload file exists
+                                pcall(function() SaveManager:Save("autoload") end)
+                                pcall(function() SaveManager:LoadAutoloadConfig() end)
+                            end
+                        end
+                    end)
+                end
+            end)
+        end)
+        print("[CMDH] SaveManager ON — folder CMDHHub/ (auto-save every 8s)")
     else
         warn("[CMDH] SaveManager failed to load")
     end
 end
 
-local ConfigExtra = Tabs.Settings:AddLeftGroupbox("Teleport Queue")
-ConfigExtra:AddInput("ScriptURL", {
-    Default = getQueueUrl() or "",
-    Numeric = false,
-    Finished = true,
-    Text = "Script raw URL",
-    Placeholder = "https://.../DevilHeart.lua",
-    Callback = function(v)
-        if v and v ~= "" then
-            setQueueUrl(v)
-            queueSelf()
-            notify("Queue", "URL saved — hop will re-run script")
-        end
-    end,
-})
-ConfigExtra:AddButton({
-    Text = "Re-queue teleport now",
-    Func = function()
-        queueSelf()
-        notify("Queue", getQueueUrl() and "queued" or "set URL first")
-    end,
-})
-ConfigExtra:AddLabel("queue_on_teleport = auto exec after hop")
-ConfigExtra:AddLabel("Place lock: 11345435986 only")
+-- Teleport queue: fixed URL, no UI (auto-exec after hop)
+pcall(function()
+    setQueueUrl(FIXED_SCRIPT_URL)
+    queueSelf()
+end)
+print("[CMDH] queue_on_teleport locked to fixed SCRIPT URL")
 
 
 ----------------------------------------------------------------
@@ -4716,6 +4906,9 @@ task.defer(function()
         "PlayerESP",
         "FiendESP",
         "DevilESP",
+        "NpcESP",
+        "RaidNpcESP",
+        "NoClip",
         "AutoHop",
         "AntiAFK",
         "MobFarm",
@@ -4745,19 +4938,16 @@ local RAID_MOBS_DISPLAY = {
     "Zombie Devil",
 }
 
--- Waves 1-4 priority
+-- Waves 1-4 priority (Zombie Devil skipped)
 local RAID_PRIO_NORMAL = {
     "Crawler Zombie",
     "Tank Zombie",
     "Zombie",
 }
 
--- Wave 5+: Zombie Devil first
+-- Wave 5: Zombie Devil only
 local RAID_PRIO_WAVE5 = {
     "Zombie Devil",
-    "Crawler Zombie",
-    "Tank Zombie",
-    "Zombie",
 }
 
 local function getRaidHintText()
@@ -4862,8 +5052,8 @@ RaidFarmGroup:AddLabel("Fixed targets (always listed):")
 for _, name in ipairs(RAID_MOBS_DISPLAY) do
     RaidFarmGroup:AddLabel("• " .. name)
 end
-RaidFarmGroup:AddLabel("R1-4: Crawler > Tank > Zombie")
-RaidFarmGroup:AddLabel("R5: Zombie Devil first")
+RaidFarmGroup:AddLabel("R1-4: Crawler > Tank > Zombie (no Devil)")
+RaidFarmGroup:AddLabel("R5: Zombie Devil only")
 
 RaidFarmGroup:AddToggle("RaidFarm", {
     Text = "Raid Farm",
@@ -4900,68 +5090,28 @@ RaidFarmGroup:AddSlider("RaidHealBack", {
 RaidFarmGroup:AddLabel("Low HP → air heal → resume farm")
 
 local function raidHuntText()
-    if #huntModes == 0 then return "Hunt: (none)" end
-    local parts = {}
-    for i, m in ipairs(huntModes) do
-        parts[#parts + 1] = i .. "." .. m
-    end
-    return "Hunt: " .. table.concat(parts, " > ")
+    return "Hunt: Behind only (" .. tostring(atkBehind) .. " studs)"
 end
 
 local raidHuntLabel = RaidFarmGroup:AddLabel(raidHuntText())
 
-RaidFarmGroup:AddDropdown("RaidHuntModes", {
-    Values = { "Behind", "Above", "Below" },
-    Default = { Behind = true },
-    Multi = true,
-    Text = "Hunt style (click add/remove)",
+-- Behind-only for raid as well
+huntModes = { "Behind" }
+
+RaidFarmGroup:AddSlider("RaidAtkBehind", {
+    Text = "Behind Studs",
+    Default = 4,
+    Min = 0,
+    Max = 25,
+    Rounding = 1,
     Callback = function(v)
-        local set = {}
-        if type(v) == "table" then
-            for k, val in pairs(v) do
-                if type(k) == "string" and val then set[k] = true
-                elseif type(val) == "string" then set[val] = true end
-            end
-        end
-        local ordered = {}
-        for _, m in ipairs(huntModes) do
-            if set[m] then ordered[#ordered + 1] = m; set[m] = nil end
-        end
-        for _, m in ipairs({ "Behind", "Above", "Below" }) do
-            if set[m] then ordered[#ordered + 1] = m end
-        end
-        huntModes = ordered
+        atkBehind = v
+        huntModes = { "Behind" }
         pcall(function()
             raidHuntLabel:SetText(raidHuntText())
             if huntLabel then huntLabel:SetText(huntText()) end
         end)
-        notify("RaidHunt", raidHuntText())
     end,
-})
-
-RaidFarmGroup:AddSlider("RaidAtkBehind", {
-    Text = "Behind studs",
-    Default = 4,
-    Min = 0,
-    Max = 20,
-    Rounding = 1,
-    Callback = function(v) atkBehind = v end,
-})
-RaidFarmGroup:AddSlider("RaidAtkAbove", {
-    Text = "Above studs",
-    Default = 3,
-    Min = 0,
-    Max = 25,
-    Rounding = 1,
-    Callback = function(v) atkAbove = v end,
-})
-RaidFarmGroup:AddSlider("RaidAtkBelow", {
-    Text = "Below studs",
-    Default = 3,
-    Min = 0,
-    Max = 15,
-    Rounding = 1,
-    Callback = function(v) atkBelow = v end,
 })
 RaidFarmGroup:AddSlider("RaidSkyHover", {
     Text = "Hover Height (studs)",
@@ -4979,7 +5129,7 @@ RaidFarmGroup:AddSlider("RaidSkyWait", {
     Rounding = 0,
     Callback = function(v) skyWait = v / 10 end,
 })
-RaidFarmGroup:AddLabel("Shared hunt settings")
+RaidFarmGroup:AddLabel("Behind-only attack · shared with Farm")
 
 
 
