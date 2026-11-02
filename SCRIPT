@@ -4301,19 +4301,11 @@ end
 local function attackOffsetPos(targetRoot)
     if not targetRoot then return nil end
     if not isMobOnGround(targetRoot) then return nil end
+    if isZombieDevil(targetRoot) then return nil end -- devil uses its own approach
     local hrp = select(1, getHRP())
     if not hrp then return nil end
     local look = targetRoot.CFrame.LookVector
     local pos = targetRoot.Position
-    local devil = isZombieDevil(targetRoot)
-    if devil then
-        -- full 3D behind the devil (Y allowed)
-        local behind = pos - look.Unit * (atkBehind or 4)
-        if behind ~= behind then
-            behind = pos - Vector3.new(0, 0, atkBehind or 4)
-        end
-        return behind
-    end
     local lockY = surfaceY(hrp.Position, 6)
     if lockY > hrp.Position.Y + 1 then
         lockY = hrp.Position.Y
@@ -4328,19 +4320,52 @@ local function attackOffsetPos(targetRoot)
     return Vector3.new(behind.X, lockY, behind.Z)
 end
 
+-- Early-style R5 Zombie Devil: step behind + face, no long lerp (no map-end overshoot)
+local function approachDevil(targetRoot)
+    local hrp = select(1, getHRP())
+    if not hrp or not targetRoot then return end
+    local pos = targetRoot.Position
+    local look = targetRoot.CFrame.LookVector
+    local flat = Vector3.new(look.X, 0, look.Z)
+    local behind
+    if flat.Magnitude > 0.05 then
+        behind = pos - flat.Unit * (atkBehind or 4)
+    else
+        behind = pos - Vector3.new(0, 0, atkBehind or 4)
+    end
+    -- keep same height band as devil (slightly below chest), not map-edge Y
+    behind = Vector3.new(behind.X, pos.Y, behind.Z)
+    local to = behind - hrp.Position
+    local dist = to.Magnitude
+    local step = math.min(dist, math.max(MOVE_SPEED * 0.04, 2))
+    local newPos = hrp.Position
+    if dist > 2.5 then
+        newPos = hrp.Position + to.Unit * step
+    else
+        newPos = behind
+    end
+    pcall(function()
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        -- face the devil body
+        if (pos - newPos).Magnitude > 0.1 then
+            hrp.CFrame = CFrame.lookAt(newPos, pos)
+        else
+            hrp.CFrame = CFrame.new(newPos)
+        end
+    end)
+end
+
 local function approachMob(targetRoot)
     if not targetRoot then return end
     if not isMobOnGround(targetRoot) then return end
+    if isZombieDevil(targetRoot) then
+        approachDevil(targetRoot)
+        return
+    end
     local dest = attackOffsetPos(targetRoot)
     if not dest then return end
-    local devil = isZombieDevil(targetRoot)
-    if devil then
-        -- look at devil body, allow Y
-        cframeFlyTo(dest, targetRoot.Position, true)
-    else
-        local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
-        cframeFlyTo(dest, lookTarget, false)
-    end
+    local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
+    cframeFlyTo(dest, lookTarget, false)
 end
 
 local function isPlayerChar(model)
