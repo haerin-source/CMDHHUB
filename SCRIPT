@@ -3483,26 +3483,36 @@ end
 makeTextLabel()
 
 
--- Heart distance (throttled, cached — no per-frame GetDescendants)
+-- Heart distance (throttled — full scan every 8s, text every 0.5s)
 do
     local heartCache = {}
     local lastRebuild = 0
     task.spawn(function()
         local lp = game:GetService("Players").LocalPlayer
         while true do
+            if type(unloaded) == "boolean" and unloaded then break end
             local now = tick()
-            if now - lastRebuild > 2 then
+            if now - lastRebuild > 8 then
                 lastRebuild = now
                 table.clear(heartCache)
-                for _, d in ipairs(workspace:GetDescendants()) do
-                    if d.Name == "DevilHeartName" and d:IsA("BillboardGui") then
-                        local label = d:FindFirstChildOfClass("TextLabel")
-                        local part = d.Adornee
-                        if not part and d.Parent and d.Parent:IsA("BasePart") then
-                            part = d.Parent
-                        end
-                        if label and part then
-                            table.insert(heartCache, { label = label, part = part })
+                -- only scan Living + Characters (not whole workspace)
+                local roots = {}
+                local living = workspace:FindFirstChild("Living")
+                if living then table.insert(roots, living) end
+                for _, plr in ipairs(game:GetService("Players"):GetPlayers()) do
+                    if plr.Character then table.insert(roots, plr.Character) end
+                end
+                for _, root in ipairs(roots) do
+                    for _, d in ipairs(root:GetDescendants()) do
+                        if d.Name == "DevilHeartName" and d:IsA("BillboardGui") then
+                            local label = d:FindFirstChildOfClass("TextLabel")
+                            local part = d.Adornee
+                            if not part and d.Parent and d.Parent:IsA("BasePart") then
+                                part = d.Parent
+                            end
+                            if label and part then
+                                table.insert(heartCache, { label = label, part = part })
+                            end
                         end
                     end
                 end
@@ -3512,16 +3522,16 @@ do
                 for _, e in ipairs(heartCache) do
                     if e.part and e.part.Parent and e.label then
                         local dist = math.floor((lr.Position - e.part.Position).Magnitude)
-                        e.label.Text = string.format("🩸 devil heart\n%dm", dist)
+                        e.label.Text = string.format("🩸 devil heart
+%dm", dist)
                     end
                 end
             end
-            task.wait(0.25)
+            task.wait(0.5)
         end
     end)
 end
 
-----------------------------------------------------------------
 -- Linoria UI wrapper (Devil Heart shell)
 ----------------------------------------------------------------
 local Players = game:GetService("Players")
@@ -4112,7 +4122,7 @@ local farmToggle = false
 local raidFarmOn = false
 local raidHealing = false
 local selectedMobs = {} -- priority ordered: [1]=highest
-local MOVE_SPEED = 150 -- default speed
+local MOVE_SPEED = 110 -- default speed (slightly slower approach)
 local atkBehind = 4
 local atkAbove = 3
 local atkBelow = 3
@@ -4231,7 +4241,7 @@ local function farmOne(model)
         if not farmToggle and not raidFarmOn then break end
         approachMob(hrp)
         doAttack()
-        task.wait()
+        task.wait(0.05)
     end
 end
 
@@ -4352,7 +4362,7 @@ local mobDropdown = MobFarmGroup:AddDropdown("SelectMobs", {
 
 MobFarmGroup:AddSlider("FarmFlySpeed", {
     Text = "Fly Speed",
-    Default = 150,
+    Default = 110,
     Min = 30,
     Max = 350,
     Rounding = 0,
@@ -4642,33 +4652,9 @@ do
         pcall(function() SaveManager:SetIgnoreIndexes({}) end)
         SaveManager:SetFolder("CMDHHub")
         SaveManager:BuildConfigSection(Tabs.Settings)
-        -- Always load last autoload config once on boot (raid/farm toggles etc.)
-        pcall(function() SaveManager:LoadAutoloadConfig() end)
-        -- Force-persist any live toggle/slider change so next session can load it
-        pcall(function()
-            if Library and Library.OnFlagChanged then
-                Library.OnFlagChanged = Library.OnFlagChanged -- keep
-            end
-            -- periodic auto-save of current config name if set
-            task.spawn(function()
-                while not unloaded do
-                    task.wait(8)
-                    pcall(function()
-                        if SaveManager.Save and SaveManager.GetConfigName then
-                            local name = SaveManager:GetConfigName()
-                            if name and name ~= "" then
-                                SaveManager:Save(name)
-                            elseif SaveManager.SaveAutoloadConfig then
-                                -- fallback: ensure autoload file exists
-                                pcall(function() SaveManager:Save("autoload") end)
-                                pcall(function() SaveManager:LoadAutoloadConfig() end)
-                            end
-                        end
-                    end)
-                end
-            end)
-        end)
-        print("[CMDH] SaveManager ON — folder CMDHHub/ (auto-save every 8s)")
+        -- do NOT LoadAutoload here — RaidFarm/MobFarm toggles are registered later
+        _G.CMDH_SaveManager = SaveManager
+        print("[CMDH] SaveManager ON — folder CMDHHub/ (autoload deferred to end)")
     else
         warn("[CMDH] SaveManager failed to load")
     end
@@ -4813,11 +4799,24 @@ end
 RaidFarmGroup:AddLabel("R1-4: Crawler > Tank > Zombie (no Devil)")
 RaidFarmGroup:AddLabel("R5: Zombie Devil only")
 
+local function pressKeyT()
+    pcall(function()
+        local vim = virtualInputManager or game:GetService("VirtualInputManager")
+        vim:SendKeyEvent(true, Enum.KeyCode.T, false, game)
+        task.wait(0.05)
+        vim:SendKeyEvent(false, Enum.KeyCode.T, false, game)
+    end)
+end
+
 RaidFarmGroup:AddToggle("RaidFarm", {
     Text = "Raid Farm",
     Default = false,
     Callback = function(v)
         raidFarmOn = v
+        if v then
+            -- one T press on enable (tool / mode)
+            task.defer(pressKeyT)
+        end
         notify("RaidFarm", v and "ON" or "OFF")
     end,
 })
@@ -4852,5 +4851,23 @@ RaidFarmGroup:AddSlider("RaidAtkBehind", {
 RaidFarmGroup:AddLabel("Behind-only · no hover · no air-heal")
 
 
+
+
+
+----------------------------------------------------------------
+-- Autoload AFTER all toggles exist (RaidFarm / MobFarm / etc.)
+----------------------------------------------------------------
+task.defer(function()
+    task.wait(0.15)
+    local SM = _G.CMDH_SaveManager
+    if SM and SM.LoadAutoloadConfig then
+        local ok, err = pcall(function() SM:LoadAutoloadConfig() end)
+        if ok then
+            print("[CMDH] autoload applied")
+        else
+            warn("[CMDH] autoload failed: " .. tostring(err))
+        end
+    end
+end)
 
 print("[CMDH] mob farm + stun + aimbot + keybinds")
