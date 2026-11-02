@@ -1,6 +1,6 @@
 --[[
   CMDH Hub — Chainsaw Man: Devil's Heart
-  Place-locked | config | queue_on_teleport
+  Place-locked | config
 ]]
 local PLACE_ID = 11345435986
 if game.PlaceId ~= PLACE_ID then
@@ -18,45 +18,6 @@ do
     end
     g.CMDH_DEVILHEART_RUNNING = true
 end
-
--- Persist script URL for hop re-exec — always prefer fixed raw URL
-local FIXED_SCRIPT_URL = "https://raw.githubusercontent.com/haerin-source/CMDHHUB/main/SCRIPT"
-local function getQueueUrl()
-    if FIXED_SCRIPT_URL and FIXED_SCRIPT_URL ~= "" then
-        return FIXED_SCRIPT_URL
-    end
-    if getgenv and getgenv().DevilHeartURL and getgenv().DevilHeartURL ~= "" then
-        return getgenv().DevilHeartURL
-    end
-    if isfile and readfile and isfile("CMDHHub/script_url.txt") then
-        local ok, u = pcall(readfile, "CMDHHub/script_url.txt")
-        if ok and u and u:match("%S") then return u:match("%S+") end
-    end
-    return nil
-end
-
-local function setQueueUrl(url)
-    if getgenv then getgenv().DevilHeartURL = url end
-    if writefile then
-        pcall(function()
-            if makefolder then pcall(makefolder, "CMDHHub") end
-            writefile("CMDHHub/script_url.txt", url)
-        end)
-    end
-end
-
-local function queueSelf()
-    local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
-    if not q then return end
-    local url = getQueueUrl()
-    if not url then return end
-    q(string.format([[
-        if game.PlaceId == %d then
-            loadstring(game:HttpGet(%q))()
-        end
-    ]], PLACE_ID, url))
-end
-queueSelf()
 
 -- Safe _G API stubs (prevents nil.SetEnabled / IsRedirectEnabled)
 do
@@ -4000,36 +3961,12 @@ local function serverHop(mode)
     end)
 end
 
--- Even-hour minus ~3 min window (01:57, 03:57, 05:57 ... local clock)
-local function inEvenHourWindow()
-    local t = os.date("*t")
-    local h, m = t.hour, t.min
-    -- minutes 54..59 on odd hours (1,3,5,...,23) → 3 min before even hour
-    if (h % 2 == 1) and m >= 54 then
-        return true
-    end
-    return false
-end
-
-local function hopEvenHourWindow()
-    if hopInProgress or unloaded then return end
-    if not inEvenHourWindow() then
-        local t = os.date("*t")
-        notify("Hop", string.format("Window is odd-hour :54-:59 (now %02d:%02d) — hopping anyway to other server", t.hour, t.min))
-    else
-        notify("Hop", "In even-hour -3m window")
-    end
-    serverHop("lowest")
-end
-
 HopGroup:AddSlider("HopMin", { Text = "Min Players", Default = 1, Min = 0, Max = 30, Rounding = 0, Callback = function(v) hopMinPlayers = v end })
 HopGroup:AddSlider("HopMax", { Text = "Max Players", Default = 20, Min = 1, Max = 50, Rounding = 0, Callback = function(v) hopMaxPlayers = v end })
 HopGroup:AddButton({ Text = "Server Hop (Random)", Func = function() serverHop("random") end })
 HopGroup:AddButton({ Text = "Server Hop (Lowest Players)", Func = function() serverHop("lowest") end })
 HopGroup:AddButton({ Text = "Server Hop (Lowest Ping)", Func = function() serverHop("ping") end })
-HopGroup:AddButton({ Text = "Hop Even-Hour -3m Window", Func = function() hopEvenHourWindow() end })
 HopGroup:AddLabel("Always skips current JobId · retries other servers")
-HopGroup:AddLabel("Even-hour window: 1:54-1:59, 3:54-3:59, ...")
 HopGroup:AddToggle("AutoHop", {
     Text = "Auto Hop if No Heart",
     Default = false,
@@ -4736,14 +4673,6 @@ do
         warn("[CMDH] SaveManager failed to load")
     end
 end
-
--- Teleport queue: fixed URL, no UI (auto-exec after hop)
-pcall(function()
-    setQueueUrl(FIXED_SCRIPT_URL)
-    queueSelf()
-end)
-print("[CMDH] queue_on_teleport locked to fixed SCRIPT URL")
-
 
 ----------------------------------------------------------------
 -- Keybinds for all toggles (Linoria KeyPicker, set in UI)
