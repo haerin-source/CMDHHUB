@@ -4172,7 +4172,17 @@ local function getHRP()
     return c and c:FindFirstChild("HumanoidRootPart"), c
 end
 
-local function cframeFlyTo(target)
+local function faceAt(hrp, pos, lookAt)
+    if lookAt then
+        local flat = Vector3.new(lookAt.X, pos.Y, lookAt.Z)
+        if (flat - pos).Magnitude > 0.05 then
+            return CFrame.lookAt(pos, flat)
+        end
+    end
+    return CFrame.new(pos)
+end
+
+local function cframeFlyTo(target, lookAt)
     if typeof(target) == "CFrame" then
         target = target.Position
     end
@@ -4182,7 +4192,7 @@ local function cframeFlyTo(target)
     local delta = target - startPos
     local dist = delta.Magnitude
     if dist < 1.5 then
-        hrp.CFrame = CFrame.new(target)
+        hrp.CFrame = faceAt(hrp, target, lookAt)
         return
     end
     local duration = dist / MOVE_SPEED
@@ -4195,11 +4205,11 @@ local function cframeFlyTo(target)
         local pos = startPos + delta * alpha
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = CFrame.new(pos)
+            hrp.CFrame = faceAt(hrp, pos, lookAt)
         end)
     until alpha >= 1 or (hrp.Position - target).Magnitude <= math.max(MOVE_SPEED * 0.05, 2)
     if hrp and hrp.Parent then
-        hrp.CFrame = CFrame.new(target)
+        hrp.CFrame = faceAt(hrp, target, lookAt)
     end
 end
 
@@ -4215,22 +4225,45 @@ local function hasHunt(mode)
     return false
 end
 
+local function groundYAt(xz)
+    -- ray down for floor; fallback to current HRP Y
+    local hrp = select(1, getHRP())
+    local fallback = hrp and hrp.Position.Y or xz.Y
+    local origin = Vector3.new(xz.X, (hrp and math.max(hrp.Position.Y, xz.Y) or xz.Y) + 80, xz.Z)
+    local ok, res = pcall(function()
+        return workspace:Raycast(origin, Vector3.new(0, -400, 0))
+    end)
+    if ok and res then
+        return res.Position.Y + 3 -- stand height
+    end
+    return fallback
+end
+
 local function attackOffsetPos(targetRoot)
     if not targetRoot then return nil end
-    -- Behind-only: stand behind the target facing them
+    -- Behind on XZ only — never climb to airborne spawns (kick magnet)
     local look = targetRoot.CFrame.LookVector
     local pos = targetRoot.Position
-    local off = -look * (atkBehind or 4)
-    return pos + off
+    local behind = pos - Vector3.new(look.X, 0, look.Z).Unit * (atkBehind or 4)
+    if behind ~= behind then -- NaN if look flat zero
+        behind = pos - Vector3.new(0, 0, atkBehind or 4)
+    end
+    local gy = groundYAt(behind)
+    -- if mob is high above floor, stay on ground under them
+    local y = gy
+    if pos.Y <= gy + 10 then
+        y = math.min(pos.Y, gy + 4)
+    end
+    return Vector3.new(behind.X, y, behind.Z)
 end
 
 local function approachMob(targetRoot)
     if not targetRoot then return end
-    -- direct behind the mob — no sky hover / wait
     local dest = attackOffsetPos(targetRoot)
-    if dest then
-        cframeFlyTo(dest)
-    end
+    if not dest then return end
+    -- face the mob's horizontal position (not straight up into the sky)
+    local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
+    cframeFlyTo(dest, lookTarget)
 end
 
 local function isPlayerChar(model)
@@ -4275,6 +4308,14 @@ local function farmOne(model)
     while (farmToggle or raidFarmOn) and hum.Parent and hum.Health > 0 do
         if not farmToggle and not raidFarmOn then break end
         approachMob(hrp)
+        -- keep facing target on ground plane while swinging
+        local my = select(1, getHRP())
+        if my and hrp.Parent then
+            pcall(function()
+                local look = Vector3.new(hrp.Position.X, my.Position.Y, hrp.Position.Z)
+                my.CFrame = faceAt(my, my.Position, look)
+            end)
+        end
         doAttack()
         task.wait(0.05)
     end
@@ -4736,28 +4777,38 @@ end)
 
 
 ----------------------------------------------------------------
--- Raid Farm: fixed 4 mobs, round priority, heal in air
+-- Raid Farm: Zombie raid + Makima raid
 ----------------------------------------------------------------
 local RAID_SKY = Vector3.new(1136, 800, -985) -- unused (kept for compat)
+local raidMode = "Zombie" -- "Zombie" | "Makima"
 
--- Always show these (even if not spawned)
-local RAID_MOBS_DISPLAY = {
+-- Zombie raid display (always listed)
+local ZOMBIE_RAID_DISPLAY = {
     "Crawler Zombie",
     "Tank Zombie",
     "Zombie",
     "Zombie Devil",
 }
-
--- Waves 1-4 priority (Zombie Devil skipped)
-local RAID_PRIO_NORMAL = {
+local ZOMBIE_PRIO_NORMAL = {
     "Crawler Zombie",
     "Tank Zombie",
     "Zombie",
 }
-
--- Wave 5: Zombie Devil only
-local RAID_PRIO_WAVE5 = {
+local ZOMBIE_PRIO_WAVE5 = {
     "Zombie Devil",
+}
+
+-- Makima raid display + priority (Longsword → Fake Makima → Makima)
+local MAKIMA_RAID_DISPLAY = {
+    "Longsword User",
+    "Fake Makima",
+    "Makima",
+}
+-- name aliases (space / no-space model names)
+local MAKIMA_PRIO = {
+    { "Longsword User", "LongswordUser", "Long Sword User" },
+    { "Fake Makima", "FakeMakima", "Fake Makima " },
+    { "Makima" },
 }
 
 local function getRaidHintText()
@@ -4768,7 +4819,6 @@ local function getRaidHintText()
     if hint and hint:IsA("TextLabel") then
         return hint.Text or ""
     end
-    -- fallback search
     local h = pg:FindFirstChild("RaidHint", true)
     if h and h:IsA("TextLabel") then return h.Text or "" end
     return ""
@@ -4781,11 +4831,29 @@ local function isWave5()
     return false
 end
 
-local function getRaidPriority()
-    if isWave5() then
-        return RAID_PRIO_WAVE5
+local function mobNameMatch(modelName, aliases)
+    if type(aliases) == "string" then
+        aliases = { aliases }
     end
-    return RAID_PRIO_NORMAL
+    local compact = modelName:gsub("%s+", "")
+    for _, a in ipairs(aliases) do
+        if modelName == a then return true end
+        if compact == a:gsub("%s+", "") then return true end
+    end
+    return false
+end
+
+local function getRaidPriorityAliases()
+    if raidMode == "Makima" then
+        return MAKIMA_PRIO
+    end
+    -- zombie: each entry is a single-name list
+    local list = isWave5() and ZOMBIE_PRIO_WAVE5 or ZOMBIE_PRIO_NORMAL
+    local out = {}
+    for _, n in ipairs(list) do
+        out[#out + 1] = { n }
+    end
+    return out
 end
 
 local function getMyHumanoid()
@@ -4796,17 +4864,24 @@ end
 local function raidPickTarget()
     local living = workspace:FindFirstChild("Living")
     if not living then return nil end
-    local prio = getRaidPriority()
-    for _, name in ipairs(prio) do
+    local prio = getRaidPriorityAliases()
+    for _, aliases in ipairs(prio) do
+        local best, bestD = nil, math.huge
+        local my = select(1, getHRP())
         for _, m in ipairs(living:GetChildren()) do
-            if m.Name == name and not isPlayerChar(m) then
+            if not isPlayerChar(m) and mobNameMatch(m.Name, aliases) then
                 local hum = m:FindFirstChildOfClass("Humanoid")
                 local root = m:FindFirstChild("HumanoidRootPart")
                 if hum and root and hum.Health > 0 then
-                    return m
+                    local d = 0
+                    if my then d = (my.Position - root.Position).Magnitude end
+                    if d < bestD then
+                        best, bestD = m, d
+                    end
                 end
             end
         end
+        if best then return best end
     end
     return nil
 end
@@ -4826,13 +4901,37 @@ task.spawn(function()
     end
 end)
 
--- UI fixed list (always visible)
-RaidFarmGroup:AddLabel("Fixed targets (always listed):")
-for _, name in ipairs(RAID_MOBS_DISPLAY) do
+-- UI
+RaidFarmGroup:AddDropdown("RaidMode", {
+    Values = { "Zombie", "Makima" },
+    Default = 1,
+    Multi = false,
+    Text = "Raid Type",
+    Callback = function(v)
+        if type(v) == "table" then
+            for k, on in pairs(v) do
+                if on and type(k) == "string" then raidMode = k break end
+                if on and type(on) == "string" then raidMode = on break end
+            end
+        elseif type(v) == "string" then
+            raidMode = v
+        end
+        if raidMode ~= "Makima" then raidMode = "Zombie" end
+        notify("RaidMode", raidMode)
+    end,
+})
+
+RaidFarmGroup:AddLabel("Zombie fixed targets:")
+for _, name in ipairs(ZOMBIE_RAID_DISPLAY) do
     RaidFarmGroup:AddLabel("• " .. name)
 end
-RaidFarmGroup:AddLabel("R1-4: Crawler > Tank > Zombie (no Devil)")
-RaidFarmGroup:AddLabel("R5: Zombie Devil only")
+RaidFarmGroup:AddLabel("Zombie R1-4: Crawler > Tank > Zombie")
+RaidFarmGroup:AddLabel("Zombie R5: Zombie Devil only")
+RaidFarmGroup:AddLabel("Makima fixed targets:")
+for _, name in ipairs(MAKIMA_RAID_DISPLAY) do
+    RaidFarmGroup:AddLabel("• " .. name)
+end
+RaidFarmGroup:AddLabel("Makima order: Longsword User > Fake Makima > Makima")
 
 local function pressKeyT()
     pcall(function()
