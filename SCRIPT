@@ -4182,23 +4182,43 @@ local function faceAt(hrp, pos, lookAt)
     return CFrame.new(pos)
 end
 
+-- snap Y to surface under a point (never climb into sky)
+local function surfaceY(xz, maxUp)
+    maxUp = maxUp or 6
+    local origin = Vector3.new(xz.X, xz.Y + maxUp, xz.Z)
+    local ok, res = pcall(function()
+        return workspace:Raycast(origin, Vector3.new(0, -(maxUp + 40), 0))
+    end)
+    if ok and res then
+        return res.Position.Y + 3
+    end
+    return xz.Y -- keep current, do not invent a higher Y
+end
+
 local function cframeFlyTo(target, lookAt)
     if typeof(target) == "CFrame" then
         target = target.Position
     end
     local hrp = select(1, getHRP())
     if not hrp then return end
-    -- XZ only: lock Y to current standing height for the whole move
-    local lockY = hrp.Position.Y
+    -- XZ only. Y always snapped to surface under feet — cannot ratchet upward
+    local lockY = surfaceY(hrp.Position, 6)
+    -- refuse to rise more than 1 stud above current surface snap
+    if lockY > hrp.Position.Y + 1 then
+        lockY = hrp.Position.Y
+    end
     local startPos = Vector3.new(hrp.Position.X, lockY, hrp.Position.Z)
     target = Vector3.new(target.X, lockY, target.Z)
     if lookAt then
         lookAt = Vector3.new(lookAt.X, lockY, lookAt.Z)
     end
-    local delta = target - startPos
-    local dist = Vector3.new(delta.X, 0, delta.Z).Magnitude
+    local delta = Vector3.new(target.X - startPos.X, 0, target.Z - startPos.Z)
+    local dist = delta.Magnitude
     if dist < 1.5 then
-        hrp.CFrame = faceAt(hrp, target, lookAt)
+        pcall(function()
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.CFrame = faceAt(hrp, startPos, lookAt)
+        end)
         return
     end
     local duration = dist / MOVE_SPEED
@@ -4219,7 +4239,10 @@ local function cframeFlyTo(target, lookAt)
         end)
     until alpha >= 1 or Vector3.new(hrp.Position.X - target.X, 0, hrp.Position.Z - target.Z).Magnitude <= math.max(MOVE_SPEED * 0.05, 2)
     if hrp and hrp.Parent then
-        hrp.CFrame = faceAt(hrp, Vector3.new(target.X, lockY, target.Z), lookAt)
+        pcall(function()
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.CFrame = faceAt(hrp, Vector3.new(target.X, lockY, target.Z), lookAt)
+        end)
     end
 end
 
@@ -4235,28 +4258,27 @@ local function hasHunt(mode)
     return false
 end
 
-local AIR_SKIP_Y = 6 -- mob higher than this vs player Y → skip
+local AIR_SKIP_Y = 5 -- mob feet farther than this above their own floor → airborne
 
-local function groundYAt(xz)
-    local hrp = select(1, getHRP())
-    local fallback = hrp and hrp.Position.Y or xz.Y
-    local origin = Vector3.new(xz.X, fallback + 5, xz.Z)
-    local ok, res = pcall(function()
-        return workspace:Raycast(origin, Vector3.new(0, -80, 0))
-    end)
-    if ok and res then
-        return res.Position.Y + 3
-    end
-    return fallback
-end
-
--- only ground-level mobs: compare to OUR Y (no floor-ray false negatives)
+-- mob must be standing near a surface under them AND near our Y
 local function isMobOnGround(root)
     if not root then return false end
     local hrp = select(1, getHRP())
     if not hrp then return false end
-    local dy = root.Position.Y - hrp.Position.Y
-    if dy > AIR_SKIP_Y or dy < -30 then
+    local pos = root.Position
+    -- relative to us: no vertical chase
+    local dy = pos.Y - hrp.Position.Y
+    if dy > AIR_SKIP_Y or dy < -25 then
+        return false
+    end
+    -- relative to surface under the mob: if floating, skip
+    local ok, res = pcall(function()
+        return workspace:Raycast(pos + Vector3.new(0, 2, 0), Vector3.new(0, -25, 0))
+    end)
+    if not ok or not res then
+        return false
+    end
+    if (pos.Y - res.Position.Y) > 8 then
         return false
     end
     return true
@@ -4266,7 +4288,11 @@ local function attackOffsetPos(targetRoot)
     if not targetRoot then return nil end
     if not isMobOnGround(targetRoot) then return nil end
     local hrp = select(1, getHRP())
-    local lockY = hrp and hrp.Position.Y or targetRoot.Position.Y
+    if not hrp then return nil end
+    local lockY = surfaceY(hrp.Position, 6)
+    if lockY > hrp.Position.Y + 1 then
+        lockY = hrp.Position.Y
+    end
     local look = targetRoot.CFrame.LookVector
     local pos = targetRoot.Position
     local flat = Vector3.new(look.X, 0, look.Z)
@@ -4276,7 +4302,6 @@ local function attackOffsetPos(targetRoot)
     else
         behind = pos - Vector3.new(0, 0, atkBehind or 4)
     end
-    -- XZ behind, Y = our current Y only
     return Vector3.new(behind.X, lockY, behind.Z)
 end
 
@@ -4285,9 +4310,7 @@ local function approachMob(targetRoot)
     if not isMobOnGround(targetRoot) then return end
     local dest = attackOffsetPos(targetRoot)
     if not dest then return end
-    local hrp = select(1, getHRP())
-    local lockY = hrp and hrp.Position.Y or dest.Y
-    local lookTarget = Vector3.new(targetRoot.Position.X, lockY, targetRoot.Position.Z)
+    local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
     cframeFlyTo(dest, lookTarget)
 end
 
