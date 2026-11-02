@@ -3483,7 +3483,7 @@ end
 makeTextLabel()
 
 
--- Heart distance (throttled — full scan every 8s, text every 0.5s)
+-- Heart distance (workspace scan every 5s, text every 0.4s)
 do
     local heartCache = {}
     local lastRebuild = 0
@@ -3492,18 +3492,15 @@ do
         while true do
             if type(unloaded) == "boolean" and unloaded then break end
             local now = tick()
-            if now - lastRebuild > 8 then
+            if now - lastRebuild > 5 then
                 lastRebuild = now
-                table.clear(heartCache)
-                -- only scan Living + Characters (not whole workspace)
-                local roots = {}
-                local living = workspace:FindFirstChild("Living")
-                if living then table.insert(roots, living) end
-                for _, plr in ipairs(game:GetService("Players"):GetPlayers()) do
-                    if plr.Character then table.insert(roots, plr.Character) end
-                end
-                for _, root in ipairs(roots) do
-                    for _, d in ipairs(root:GetDescendants()) do
+                heartCache = {}
+                -- full workspace: hearts can sit outside Living
+                local ok, descendants = pcall(function()
+                    return workspace:GetDescendants()
+                end)
+                if ok and descendants then
+                    for _, d in ipairs(descendants) do
                         if d.Name == "DevilHeartName" and d:IsA("BillboardGui") then
                             local label = d:FindFirstChildOfClass("TextLabel")
                             local part = d.Adornee
@@ -3511,7 +3508,7 @@ do
                                 part = d.Parent
                             end
                             if label and part then
-                                table.insert(heartCache, { label = label, part = part })
+                                heartCache[#heartCache + 1] = { label = label, part = part }
                             end
                         end
                     end
@@ -3520,13 +3517,13 @@ do
             local lr = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
             if lr then
                 for _, e in ipairs(heartCache) do
-                    if e.part and e.part.Parent and e.label then
+                    if e.part and e.part.Parent and e.label and e.label.Parent then
                         local dist = math.floor((lr.Position - e.part.Position).Magnitude)
-                        e.label.Text = string.format("devil heart\n%dm", dist)
+                        e.label.Text = "devil heart\n" .. dist .. "m"
                     end
                 end
             end
-            task.wait(0.5)
+            task.wait(0.4)
         end
     end)
 end
