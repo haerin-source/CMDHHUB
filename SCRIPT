@@ -4188,9 +4188,15 @@ local function cframeFlyTo(target, lookAt)
     end
     local hrp = select(1, getHRP())
     if not hrp then return end
-    local startPos = hrp.Position
+    -- XZ only: lock Y to current standing height for the whole move
+    local lockY = hrp.Position.Y
+    local startPos = Vector3.new(hrp.Position.X, lockY, hrp.Position.Z)
+    target = Vector3.new(target.X, lockY, target.Z)
+    if lookAt then
+        lookAt = Vector3.new(lookAt.X, lockY, lookAt.Z)
+    end
     local delta = target - startPos
-    local dist = delta.Magnitude
+    local dist = Vector3.new(delta.X, 0, delta.Z).Magnitude
     if dist < 1.5 then
         hrp.CFrame = faceAt(hrp, target, lookAt)
         return
@@ -4202,14 +4208,18 @@ local function cframeFlyTo(target, lookAt)
         if not hrp.Parent then break end
         PostSimulation:Wait()
         local alpha = math.min((tick() - t0) / math.max(duration, 0.01), 1)
-        local pos = startPos + delta * alpha
+        local pos = Vector3.new(
+            startPos.X + delta.X * alpha,
+            lockY,
+            startPos.Z + delta.Z * alpha
+        )
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.CFrame = faceAt(hrp, pos, lookAt)
         end)
-    until alpha >= 1 or (hrp.Position - target).Magnitude <= math.max(MOVE_SPEED * 0.05, 2)
+    until alpha >= 1 or Vector3.new(hrp.Position.X - target.X, 0, hrp.Position.Z - target.Z).Magnitude <= math.max(MOVE_SPEED * 0.05, 2)
     if hrp and hrp.Parent then
-        hrp.CFrame = faceAt(hrp, target, lookAt)
+        hrp.CFrame = faceAt(hrp, Vector3.new(target.X, lockY, target.Z), lookAt)
     end
 end
 
@@ -4225,14 +4235,14 @@ local function hasHunt(mode)
     return false
 end
 
-local AIR_SKIP_Y = 10 -- studs above floor/player → ignore (no Y chase)
+local AIR_SKIP_Y = 6 -- mob higher than this vs player Y → skip
 
 local function groundYAt(xz)
     local hrp = select(1, getHRP())
     local fallback = hrp and hrp.Position.Y or xz.Y
-    local origin = Vector3.new(xz.X, (hrp and math.max(hrp.Position.Y, xz.Y) or xz.Y) + 80, xz.Z)
+    local origin = Vector3.new(xz.X, fallback + 5, xz.Z)
     local ok, res = pcall(function()
-        return workspace:Raycast(origin, Vector3.new(0, -400, 0))
+        return workspace:Raycast(origin, Vector3.new(0, -80, 0))
     end)
     if ok and res then
         return res.Position.Y + 3
@@ -4240,16 +4250,13 @@ local function groundYAt(xz)
     return fallback
 end
 
--- true only if mob is near the floor (or near our Y) — airborne spawns skipped
+-- only ground-level mobs: compare to OUR Y (no floor-ray false negatives)
 local function isMobOnGround(root)
     if not root then return false end
-    local pos = root.Position
-    local gy = groundYAt(pos)
-    if pos.Y > gy + AIR_SKIP_Y then
-        return false
-    end
     local hrp = select(1, getHRP())
-    if hrp and (pos.Y - hrp.Position.Y) > AIR_SKIP_Y then
+    if not hrp then return false end
+    local dy = root.Position.Y - hrp.Position.Y
+    if dy > AIR_SKIP_Y or dy < -30 then
         return false
     end
     return true
@@ -4258,6 +4265,8 @@ end
 local function attackOffsetPos(targetRoot)
     if not targetRoot then return nil end
     if not isMobOnGround(targetRoot) then return nil end
+    local hrp = select(1, getHRP())
+    local lockY = hrp and hrp.Position.Y or targetRoot.Position.Y
     local look = targetRoot.CFrame.LookVector
     local pos = targetRoot.Position
     local flat = Vector3.new(look.X, 0, look.Z)
@@ -4267,9 +4276,8 @@ local function attackOffsetPos(targetRoot)
     else
         behind = pos - Vector3.new(0, 0, atkBehind or 4)
     end
-    local gy = groundYAt(behind)
-    -- force destination Y to ground only — zero vertical chase
-    return Vector3.new(behind.X, gy, behind.Z)
+    -- XZ behind, Y = our current Y only
+    return Vector3.new(behind.X, lockY, behind.Z)
 end
 
 local function approachMob(targetRoot)
@@ -4277,7 +4285,9 @@ local function approachMob(targetRoot)
     if not isMobOnGround(targetRoot) then return end
     local dest = attackOffsetPos(targetRoot)
     if not dest then return end
-    local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
+    local hrp = select(1, getHRP())
+    local lockY = hrp and hrp.Position.Y or dest.Y
+    local lookTarget = Vector3.new(targetRoot.Position.X, lockY, targetRoot.Position.Z)
     cframeFlyTo(dest, lookTarget)
 end
 
