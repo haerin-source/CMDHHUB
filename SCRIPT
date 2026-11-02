@@ -3546,12 +3546,41 @@ local Player = Players.LocalPlayer
 local PlaceId = game.PlaceId
 local JobId = game.JobId
 local REPO = "https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/"
+local REPO_FALLBACK = "https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/"
 
-if type(getgenv) == "function" and getgenv().DevilHeartUnload then
+-- unload previous instance if any (already handled at file top; soft second pass)
+if type(getgenv) == "function" and type(getgenv().DevilHeartUnload) == "function" then
     pcall(getgenv().DevilHeartUnload)
+    task.wait(0.2)
 end
 
-local Library = loadstring(game:HttpGet(REPO .. "Library.lua"))()
+local function fetchLib(path)
+    local urls = {
+        REPO .. path,
+        REPO_FALLBACK .. path,
+    }
+    for _, url in ipairs(urls) do
+        local okGet, body = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if okGet and type(body) == "string" and #body > 100 and not body:find("^%s*<") then
+            local okLoad, fn = pcall(loadstring, body)
+            if okLoad and type(fn) == "function" then
+                local okRun, lib = pcall(fn)
+                if okRun and lib ~= nil then
+                    return lib
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local Library = fetchLib("Library.lua")
+if not Library then
+    warn("[CMDH] Linoria Library failed to load (HttpGet/loadstring nil)")
+    return
+end
 
 local function apCall(name, ...)
     local api = rawget(_G, "AutoParryAPI")
@@ -3564,13 +3593,23 @@ local function apCall(name, ...)
 end
 
 
-local Window = Library:CreateWindow({
-    Title = "CMDH Hub | Devil's Heart",
-    Center = true,
-    AutoShow = true,
-    TabPadding = 8,
-    MenuFadeTime = 0.2,
-})
+local Window
+do
+    local ok, win = pcall(function()
+        return Library:CreateWindow({
+            Title = "CMDH Hub | Devil's Heart",
+            Center = true,
+            AutoShow = true,
+            TabPadding = 8,
+            MenuFadeTime = 0.2,
+        })
+    end)
+    if not ok or not win then
+        warn("[CMDH] CreateWindow failed: " .. tostring(win))
+        return
+    end
+    Window = win
+end
 
 local Tabs = {
     Main = Window:AddTab("Main"),
