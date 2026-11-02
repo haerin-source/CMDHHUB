@@ -4195,29 +4195,36 @@ local function surfaceY(xz, maxUp)
     return xz.Y -- keep current, do not invent a higher Y
 end
 
-local function cframeFlyTo(target, lookAt)
+local function cframeFlyTo(target, lookAt, allowY)
     if typeof(target) == "CFrame" then
         target = target.Position
     end
     local hrp = select(1, getHRP())
     if not hrp then return end
-    -- XZ only. Y always snapped to surface under feet — cannot ratchet upward
-    local lockY = surfaceY(hrp.Position, 6)
-    -- refuse to rise more than 1 stud above current surface snap
-    if lockY > hrp.Position.Y + 1 then
-        lockY = hrp.Position.Y
+    local startPos, dist, delta
+    if allowY then
+        -- full 3D path (Zombie Devil only)
+        startPos = hrp.Position
+        delta = target - startPos
+        dist = delta.Magnitude
+    else
+        -- XZ only, Y surface-locked
+        local lockY = surfaceY(hrp.Position, 6)
+        if lockY > hrp.Position.Y + 1 then
+            lockY = hrp.Position.Y
+        end
+        startPos = Vector3.new(hrp.Position.X, lockY, hrp.Position.Z)
+        target = Vector3.new(target.X, lockY, target.Z)
+        if lookAt then
+            lookAt = Vector3.new(lookAt.X, lockY, lookAt.Z)
+        end
+        delta = Vector3.new(target.X - startPos.X, 0, target.Z - startPos.Z)
+        dist = delta.Magnitude
     end
-    local startPos = Vector3.new(hrp.Position.X, lockY, hrp.Position.Z)
-    target = Vector3.new(target.X, lockY, target.Z)
-    if lookAt then
-        lookAt = Vector3.new(lookAt.X, lockY, lookAt.Z)
-    end
-    local delta = Vector3.new(target.X - startPos.X, 0, target.Z - startPos.Z)
-    local dist = delta.Magnitude
     if dist < 1.5 then
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = faceAt(hrp, startPos, lookAt)
+            hrp.CFrame = faceAt(hrp, allowY and target or startPos, lookAt)
         end)
         return
     end
@@ -4228,20 +4235,20 @@ local function cframeFlyTo(target, lookAt)
         if not hrp.Parent then break end
         PostSimulation:Wait()
         local alpha = math.min((tick() - t0) / math.max(duration, 0.01), 1)
-        local pos = Vector3.new(
-            startPos.X + delta.X * alpha,
-            lockY,
-            startPos.Z + delta.Z * alpha
-        )
+        local pos = startPos + delta * alpha
+        if not allowY then
+            pos = Vector3.new(pos.X, startPos.Y, pos.Z)
+        end
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.CFrame = faceAt(hrp, pos, lookAt)
         end)
-    until alpha >= 1 or Vector3.new(hrp.Position.X - target.X, 0, hrp.Position.Z - target.Z).Magnitude <= math.max(MOVE_SPEED * 0.05, 2)
+    until alpha >= 1 or (hrp.Position - target).Magnitude <= math.max(MOVE_SPEED * 0.05, 2)
     if hrp and hrp.Parent then
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = faceAt(hrp, Vector3.new(target.X, lockY, target.Z), lookAt)
+            local final = allowY and target or Vector3.new(target.X, startPos.Y, target.Z)
+            hrp.CFrame = faceAt(hrp, final, lookAt)
         end)
     end
 end
@@ -4260,18 +4267,25 @@ end
 
 local AIR_SKIP_Y = 5 -- mob feet farther than this above their own floor → airborne
 
--- mob must be standing near a surface under them AND near our Y
+local function isZombieDevil(modelOrRoot)
+    local m = modelOrRoot
+    if m and m:IsA("BasePart") then m = m.Parent end
+    if not m then return false end
+    local n = m.Name or ""
+    return n == "Zombie Devil" or n:gsub("%s+", "") == "ZombieDevil"
+end
+
+-- ground filter: airborne skipped, EXCEPT Zombie Devil (Y allowed)
 local function isMobOnGround(root)
     if not root then return false end
+    if isZombieDevil(root) then return true end
     local hrp = select(1, getHRP())
     if not hrp then return false end
     local pos = root.Position
-    -- relative to us: no vertical chase
     local dy = pos.Y - hrp.Position.Y
     if dy > AIR_SKIP_Y or dy < -25 then
         return false
     end
-    -- relative to surface under the mob: if floating, skip
     local ok, res = pcall(function()
         return workspace:Raycast(pos + Vector3.new(0, 2, 0), Vector3.new(0, -25, 0))
     end)
@@ -4289,12 +4303,21 @@ local function attackOffsetPos(targetRoot)
     if not isMobOnGround(targetRoot) then return nil end
     local hrp = select(1, getHRP())
     if not hrp then return nil end
+    local look = targetRoot.CFrame.LookVector
+    local pos = targetRoot.Position
+    local devil = isZombieDevil(targetRoot)
+    if devil then
+        -- full 3D behind the devil (Y allowed)
+        local behind = pos - look.Unit * (atkBehind or 4)
+        if behind ~= behind then
+            behind = pos - Vector3.new(0, 0, atkBehind or 4)
+        end
+        return behind
+    end
     local lockY = surfaceY(hrp.Position, 6)
     if lockY > hrp.Position.Y + 1 then
         lockY = hrp.Position.Y
     end
-    local look = targetRoot.CFrame.LookVector
-    local pos = targetRoot.Position
     local flat = Vector3.new(look.X, 0, look.Z)
     local behind
     if flat.Magnitude > 0.05 then
@@ -4310,8 +4333,14 @@ local function approachMob(targetRoot)
     if not isMobOnGround(targetRoot) then return end
     local dest = attackOffsetPos(targetRoot)
     if not dest then return end
-    local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
-    cframeFlyTo(dest, lookTarget)
+    local devil = isZombieDevil(targetRoot)
+    if devil then
+        -- look at devil body, allow Y
+        cframeFlyTo(dest, targetRoot.Position, true)
+    else
+        local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
+        cframeFlyTo(dest, lookTarget, false)
+    end
 end
 
 local function isPlayerChar(model)
@@ -4357,11 +4386,13 @@ local function farmOne(model)
         if not farmToggle and not raidFarmOn then break end
         if not isMobOnGround(hrp) then break end -- stop if target leaves the ground
         approachMob(hrp)
-        -- keep facing target on ground plane while swinging
         local my = select(1, getHRP())
         if my and hrp.Parent then
             pcall(function()
-                local look = Vector3.new(hrp.Position.X, my.Position.Y, hrp.Position.Z)
+                local look = hrp.Position
+                if not isZombieDevil(hrp) then
+                    look = Vector3.new(hrp.Position.X, my.Position.Y, hrp.Position.Z)
+                end
                 my.CFrame = faceAt(my, my.Position, look)
             end)
         end
