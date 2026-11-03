@@ -4374,6 +4374,60 @@ PlayerMoveGroup:AddToggle("Noclip", {
 })
 PlayerMoveGroup:AddLabel("CanCollide off + micro jitter")
 
+local flyPlatformOn = false
+local flyPlatformPart = nil
+local flyPlatformConn = nil
+
+local function setFlyPlatform(on)
+    flyPlatformOn = on and true or false
+    if flyPlatformConn then
+        pcall(function() flyPlatformConn:Disconnect() end)
+        flyPlatformConn = nil
+    end
+    if flyPlatformPart then
+        pcall(function() flyPlatformPart:Destroy() end)
+        flyPlatformPart = nil
+    end
+    if not flyPlatformOn then
+        notify("FlyPlatform", "OFF")
+        return
+    end
+    notify("FlyPlatform", "ON")
+    local char = Player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        notify("FlyPlatform", "no character")
+        flyPlatformOn = false
+        return
+    end
+    local part = Instance.new("Part")
+    part.Name = "CMDH_FlyPlatform"
+    part.Size = Vector3.new(6, 1, 6)
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 0.45
+    part.Color = Color3.fromRGB(0, 200, 120)
+    part.Material = Enum.Material.Neon
+    part.Parent = workspace
+    flyPlatformPart = part
+    flyPlatformConn = RunService.RenderStepped:Connect(function()
+        if unloaded or not flyPlatformOn then return end
+        local c = Player.Character
+        local root = c and c:FindFirstChild("HumanoidRootPart")
+        if not root or not flyPlatformPart then return end
+        flyPlatformPart.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
+    end)
+end
+
+PlayerMoveGroup:AddToggle("FlyPlatform", {
+    Text = "Fly Platform",
+    Default = false,
+    Callback = function(v)
+        setFlyPlatform(v)
+    end,
+})
+PlayerMoveGroup:AddLabel("Anchored pad under feet")
+
 UnloadGroup:AddButton({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
 Library:OnUnload(function() unloaded = true end)
 
@@ -4416,9 +4470,10 @@ local PostSimulation = RunService.PostSimulation
 local farmToggle = false
 local raidFarmOn = false
 local specterFarmOn = false
+local allFiendFarmOn = false
 local raidHealing = false
 local selectedMobs = {} -- priority ordered: [1]=highest
-local MOVE_SPEED = 110 -- default speed (slightly slower approach)
+local MOVE_SPEED = 40 -- capped (Guillburt / ban risk above ~50)
 local atkBehind = 4
 local atkAbove = 3
 local atkBelow = 3
@@ -4469,18 +4524,27 @@ local function cframeFlyTo(target, lookAt, allowY)
         delta = target - startPos
         dist = delta.Magnitude
     else
-        -- XZ only, Y surface-locked
-        local lockY = surfaceY(hrp.Position, 6)
-        if lockY > hrp.Position.Y + 1 then
-            lockY = hrp.Position.Y
+        -- XZ move; Y lerps to target.Y (mob height) so we don't sit in the sky
+        local lockY = target.Y
+        startPos = hrp.Position
+        -- if we're way above target, snap Y down fast first (anti sky-hit)
+        if startPos.Y > lockY + 8 then
+            startPos = Vector3.new(startPos.X, lockY, startPos.Z)
+            pcall(function()
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.CFrame = faceAt(hrp, startPos, lookAt and Vector3.new(lookAt.X, lockY, lookAt.Z) or nil)
+            end)
         end
-        startPos = Vector3.new(hrp.Position.X, lockY, hrp.Position.Z)
         target = Vector3.new(target.X, lockY, target.Z)
         if lookAt then
             lookAt = Vector3.new(lookAt.X, lockY, lookAt.Z)
         end
-        delta = Vector3.new(target.X - startPos.X, 0, target.Z - startPos.Z)
-        dist = delta.Magnitude
+        delta = target - startPos
+        dist = Vector3.new(delta.X, 0, delta.Z).Magnitude
+        -- include small Y in path so we settle to mob height
+        if math.abs(delta.Y) > 0.5 then
+            dist = dist + math.abs(delta.Y) * 0.35
+        end
     end
     if dist < 1.5 then
         pcall(function()
@@ -4492,13 +4556,14 @@ local function cframeFlyTo(target, lookAt, allowY)
     local duration = dist / MOVE_SPEED
     local t0 = tick()
     repeat
-        if not farmToggle and not raidFarmOn and not specterFarmOn then break end
+        if not farmToggle and not raidFarmOn and not specterFarmOn and not allFiendFarmOn then break end
         if not hrp.Parent then break end
         PostSimulation:Wait()
         local alpha = math.min((tick() - t0) / math.max(duration, 0.01), 1)
         local pos = startPos + delta * alpha
         if not allowY then
-            pos = Vector3.new(pos.X, startPos.Y, pos.Z)
+            -- XZ from path; Y eases to mob height
+            pos = Vector3.new(pos.X, startPos.Y + (target.Y - startPos.Y) * alpha, pos.Z)
         end
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
@@ -4508,7 +4573,7 @@ local function cframeFlyTo(target, lookAt, allowY)
     if hrp and hrp.Parent then
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
-            local final = allowY and target or Vector3.new(target.X, startPos.Y, target.Z)
+            local final = allowY and target or Vector3.new(target.X, target.Y, target.Z)
             hrp.CFrame = faceAt(hrp, final, lookAt)
         end)
     end
@@ -4567,10 +4632,8 @@ local function attackOffsetPos(targetRoot)
     if not hrp then return nil end
     local look = targetRoot.CFrame.LookVector
     local pos = targetRoot.Position
-    local lockY = surfaceY(hrp.Position, 6)
-    if lockY > hrp.Position.Y + 1 then
-        lockY = hrp.Position.Y
-    end
+    -- stand at MOB height (same floor) — no surface ratchet / sky drift
+    local lockY = pos.Y
     local flat = Vector3.new(look.X, 0, look.Z)
     local behind
     if flat.Magnitude > 0.05 then
@@ -4669,7 +4732,7 @@ local function farmOne(model)
     local hum = model:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
     local function farmGate()
-        return farmToggle or raidFarmOn or specterFarmOn
+        return farmToggle or raidFarmOn or specterFarmOn or allFiendFarmOn
     end
     while farmGate() and hum.Parent and hum.Health > 0 do
         if not farmGate() then break end
@@ -4806,13 +4869,13 @@ local mobDropdown = MobFarmGroup:AddDropdown("SelectMobs", {
 })
 
 MobFarmGroup:AddSlider("FarmFlySpeed", {
-    Text = "Fly Speed",
-    Default = 110,
-    Min = 30,
-    Max = 350,
+    Text = "Fly Speed (max 50)",
+    Default = 40,
+    Min = 10,
+    Max = 50,
     Rounding = 0,
     Callback = function(v)
-        MOVE_SPEED = v
+        MOVE_SPEED = math.clamp(v, 10, 50)
     end,
 })
 local function huntText()
@@ -5145,7 +5208,10 @@ task.defer(function()
         "MobAimbot",
         "RaidFarm",
             "Noclip",
-            "SpecterFarm"}) do
+            "SpecterFarm",
+            "AllFiendFarm",
+            "SpecterESP",
+            "FlyPlatform"}) do
         bindToggle(name)
     end
     print("[CMDH] keybinds ready — set each toggle key in the UI")
@@ -5424,6 +5490,160 @@ SpecterGroup:AddToggle("SpecterFarm", {
 SpecterGroup:AddLabel("specter / specterN in Living")
 SpecterGroup:AddLabel("Same farmOne path as Auto Farm")
 SpecterGroup:AddLabel("Works at night event")
+
+----------------------------------------------------------------
+-- All Fiend Farm: any *Fiend*, nearest first, same farmOne path
+----------------------------------------------------------------
+-- allFiendFarmOn declared with farm flags above
+
+local function isFiendName(name)
+    if type(name) ~= "string" then return false end
+    return name:lower():find("fiend", 1, true) ~= nil
+end
+
+local function pickNearestFiend()
+    local living = workspace:FindFirstChild("Living")
+    local my = select(1, getHRP())
+    if not living then return nil end
+    local best, bestD = nil, math.huge
+    for _, m in ipairs(living:GetChildren()) do
+        if not isPlayerChar(m) and isFiendName(m.Name) then
+            local hum = m:FindFirstChildOfClass("Humanoid")
+            local root = m:FindFirstChild("HumanoidRootPart")
+            if hum and root and hum.Health > 0 and isMobOnGround(root) then
+                local d = my and (my.Position - root.Position).Magnitude or 0
+                if d < bestD then
+                    best, bestD = m, d
+                end
+            end
+        end
+    end
+    return best
+end
+
+task.spawn(function()
+    while not unloaded do
+        if not allFiendFarmOn then
+            task.wait(0.4)
+        else
+            local target = pickNearestFiend()
+            if target then
+                farmOne(target)
+            end
+            task.wait(0.15)
+        end
+    end
+end)
+
+-- reuse Specter group area for All Farm toggle under Farm tab
+local AllFarmGroup = Tabs.Farm:AddLeftGroupbox("All Fiend")
+AllFarmGroup:AddToggle("AllFiendFarm", {
+    Text = "All Fiend Farm",
+    Default = false,
+    Callback = function(v)
+        allFiendFarmOn = v
+        notify("AllFiendFarm", v and "ON" or "OFF")
+    end,
+})
+AllFarmGroup:AddLabel("All *Fiend* names · nearest first")
+AllFarmGroup:AddLabel("Same behind + speed cap as Auto Farm")
+
+----------------------------------------------------------------
+-- Specter ESP
+----------------------------------------------------------------
+local specterEspOn = false
+local specterEspMap = {}
+
+local function clearSpecterEsp()
+    for m, e in pairs(specterEspMap) do
+        pcall(function()
+            if e.highlight then e.highlight:Destroy() end
+            if e.billboard then e.billboard:Destroy() end
+        end)
+        specterEspMap[m] = nil
+    end
+end
+
+local function addSpecterEsp(model)
+    if specterEspMap[model] then return end
+    local root = model:FindFirstChild("HumanoidRootPart")
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+    local h = Instance.new("Highlight")
+    h.Name = "CMDH_SpecterESP"
+    h.Adornee = model
+    h.FillColor = Color3.fromRGB(180, 80, 255)
+    h.OutlineColor = Color3.fromRGB(220, 160, 255)
+    h.FillTransparency = 0.6
+    h.Parent = model
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "CMDH_SpecterESP_BB"
+    bb.Adornee = root
+    bb.Size = UDim2.new(0, 140, 0, 36)
+    bb.AlwaysOnTop = true
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.Parent = root
+    local tl = Instance.new("TextLabel")
+    tl.Size = UDim2.new(1, 0, 1, 0)
+    tl.BackgroundTransparency = 1
+    tl.TextColor3 = Color3.fromRGB(220, 160, 255)
+    tl.TextStrokeTransparency = 0.4
+    tl.TextScaled = true
+    tl.Font = Enum.Font.Code
+    tl.Text = model.Name
+    tl.Parent = bb
+    specterEspMap[model] = { highlight = h, billboard = bb, label = tl, root = root, humanoid = hum }
+end
+
+task.spawn(function()
+    while not unloaded do
+        if not specterEspOn then
+            task.wait(0.5)
+        else
+            local living = workspace:FindFirstChild("Living")
+            local my = select(1, getHRP())
+            if living then
+                local seen = {}
+                for _, m in ipairs(living:GetChildren()) do
+                    if isSpecterName(m.Name) and not isPlayerChar(m) then
+                        local hum = m:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            seen[m] = true
+                            addSpecterEsp(m)
+                        end
+                    end
+                end
+                for m, e in pairs(specterEspMap) do
+                    if not seen[m] or not m.Parent then
+                        pcall(function()
+                            if e.highlight then e.highlight:Destroy() end
+                            if e.billboard then e.billboard:Destroy() end
+                        end)
+                        specterEspMap[m] = nil
+                    elseif e.label and e.root and my then
+                        local d = math.floor((my.Position - e.root.Position).Magnitude)
+                        local hp = e.humanoid and math.floor(e.humanoid.Health) or 0
+                        local mx = e.humanoid and math.floor(e.humanoid.MaxHealth) or 0
+                        e.label.Text = string.format("%s\n%d/%d | %dm", m.Name, hp, mx, d)
+                    end
+                end
+            end
+            task.wait(0.35)
+        end
+    end
+end)
+
+local SpecterESPGroup = Tabs.ESP:AddRightGroupbox("Specter ESP")
+SpecterESPGroup:AddToggle("SpecterESP", {
+    Text = "Specter ESP",
+    Default = false,
+    Callback = function(v)
+        specterEspOn = v
+        if not v then clearSpecterEsp() end
+        notify("SpecterESP", v and "ON" or "OFF")
+    end,
+})
+SpecterESPGroup:AddLabel("Purple outline · night specters")
 
 
 -- Autoload AFTER all toggles exist (RaidFarm / MobFarm / etc.)
