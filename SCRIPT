@@ -3760,7 +3760,7 @@ do
         return Library:CreateWindow({
             Title = "CMDH Hub | Devil's Heart",
             Center = true,
-            AutoShow = true,
+            AutoShow = false,
             TabPadding = 8,
             MenuFadeTime = 0.2,
         })
@@ -3770,6 +3770,7 @@ do
         return
     end
     Window = win
+    pcall(function() Window:SetVisible(false) end)
 end
 
 local Tabs = {
@@ -3802,11 +3803,28 @@ local HybridCodeGroup = Tabs.Codes:AddLeftGroupbox("Hybrid Reset")
 local FiendCodeGroup = Tabs.Codes:AddRightGroupbox("Fiend Reset")
 local AfkGroup = Tabs.Settings:AddRightGroupbox("AFK")
 local UnloadGroup = Tabs.Settings:AddLeftGroupbox("Script")
+local SilentGroup = Tabs.Settings:AddRightGroupbox("Display")
+SilentGroup:AddToggle("ShowUI", {
+    Text = "Show UI",
+    Default = false,
+    Callback = function(v)
+        uiVisible = v and true or false
+        pcall(function() Window:SetVisible(uiVisible) end)
+    end,
+})
+SilentGroup:AddToggle("NotifyToggle", {
+    Text = "Notifications",
+    Default = true,
+    Callback = function(v)
+        notifyEnabled = v and true or false
+    end,
+})
+SilentGroup:AddLabel("RightShift also toggles UI")
 local PlayerMoveGroup = Tabs.Player:AddLeftGroupbox("Movement")
 local SpecterGroup = Tabs.Farm:AddRightGroupbox("Specter")
 
 local unloaded = false
-local uiVisible = true
+local uiVisible = false
 local afkEnabled = false
 local hopInProgress = false
 local hopMinPlayers, hopMaxPlayers = 1, 20
@@ -3817,9 +3835,11 @@ local fiendMap, devilMap = {}, {}
 local COLOR_NPC = Color3.fromRGB(255, 255, 255)
 local COLOR_MUT = Color3.fromRGB(255, 223, 100)
 
+local notifyEnabled = true
 local function notify(t, m)
-    print("[" .. t .. "] " .. m)
-    pcall(function() Library:Notify(t .. " — " .. m, 3) end)
+    print("[" .. t .. "] " .. tostring(m))
+    if not notifyEnabled then return end
+    pcall(function() Library:Notify(t .. " — " .. tostring(m), 3) end)
 end
 
 ----------------------------------------------------------------
@@ -3842,9 +3862,11 @@ CombatGroup:AddToggle("AutoDash", {
     end,
 })
 
+CombatGroup:AddLabel("ParryKick: needs enemy attack windup in range")
+CombatGroup:AddLabel("Does not aim — turn OFF Mob Aimbot if camera locks")
 CombatGroup:AddToggle("AutoParryKick", {
     Text = "Auto Parry Kick",
-    Default = true,
+    Default = false,
     Callback = function(v)
         if _G.AutoParryAPI and _G.AutoParryAPI.SetParryKick then
             apCall("SetParryKick", v)
@@ -4460,71 +4482,138 @@ end
 
 ----------------------------------------------------------------
 -- Mob Farm only (Mob farm path + fly)
--- Auto Yes on quest complete / repeat dialog
+-- Auto Yes on quest complete / Ready Up / Enter — signal fire only (no mouse)
 local autoQuestYes = true
-task.spawn(function()
-    local function tryClickYes(root)
-        if not root then return false end
-        for _, d in ipairs(root:GetDescendants()) do
-            if d:IsA("TextButton") or d:IsA("ImageButton") then
-                local t = ""
-                pcall(function() t = string.lower(tostring(d.Text or "")) end)
-                local n = string.lower(d.Name or "")
-                -- Yes / 예 / confirm style
-                if t == "yes" or t == "예" or t == "y" or n == "yes" or n:find("yes", 1, true) then
-                    pcall(function()
-                        firesignal(d.MouseButton1Click)
-                    end)
-                    pcall(function()
-                        if typeof(getconnections) == "function" then
-                            for _, c in ipairs(getconnections(d.MouseButton1Click)) do
-                                pcall(function() c:Fire() end)
+local autoReadyUp = true
+
+local function fireButton(btn)
+    if not btn then return false end
+    local ok = false
+    pcall(function()
+        if typeof(firesignal) == "function" then
+            firesignal(btn.MouseButton1Click)
+            ok = true
+        end
+    end)
+    pcall(function()
+        if typeof(getconnections) == "function" then
+            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
+                pcall(function()
+                    if c.Fire then c:Fire() elseif c.Function then c.Function() end
+                end)
+                ok = true
+            end
+        end
+    end)
+    pcall(function()
+        if btn.Activate then btn:Activate() ok = true end
+    end)
+    return ok
+end
+
+local function buttonMatches(btn, words)
+    local t, n = "", ""
+    pcall(function() t = string.lower(tostring(btn.Text or "")) end)
+    pcall(function() n = string.lower(tostring(btn.Name or "")) end)
+    for _, w in ipairs(words) do
+        local lw = string.lower(w)
+        if t == lw or n == lw or t:find(lw, 1, true) or n:find(lw, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function scanAndClick(words, requireText)
+    local pg = Player:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    for _, gui in ipairs(pg:GetDescendants()) do
+        if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+            if buttonMatches(gui, words) then
+                -- optional context filter
+                if requireText then
+                    local parent = gui.Parent
+                    local ctx = false
+                    local root = gui
+                    for _ = 1, 8 do
+                        if not root then break end
+                        for _, d in ipairs(root:GetDescendants()) do
+                            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                                local tx = ""
+                                pcall(function() tx = tostring(d.Text or "") end)
+                                for _, r in ipairs(requireText) do
+                                    if tx:find(r) then ctx = true break end
+                                end
                             end
+                            if ctx then break end
                         end
-                    end)
-                    pcall(function()
-                        local vim = virtualInputManager or game:GetService("VirtualInputManager")
-                        local pos = d.AbsolutePosition + d.AbsoluteSize / 2
-                        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-                        task.wait(0.05)
-                        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
-                    end)
+                        if ctx then break end
+                        root = root.Parent
+                    end
+                    if not ctx then
+                        -- still allow pure Yes button match
+                    end
+                end
+                if fireButton(gui) then
                     return true
                 end
             end
         end
-        return false
     end
+    return false
+end
+
+-- try known quest remotes once
+local function tryQuestRemotes()
+    local ev = ReplicatedStorage:FindFirstChild("events")
+    if not ev then return end
+    local remote = ev:FindFirstChild("remote")
+    if not remote then return end
+    for _, args in ipairs({
+        { "RepeatQuest" },
+        { "QuestRepeat" },
+        { "AcceptQuest" },
+        { "Quest", "Repeat" },
+        { "Quest", "Yes" },
+        { "Dialog", "Yes" },
+    }) do
+        pcall(function() remote:FireServer(unpack(args)) end)
+    end
+end
+
+task.spawn(function()
     while not unloaded do
         if autoQuestYes then
-            local pg = Player:FindFirstChild("PlayerGui")
-            if pg then
-                -- scan top-level + common prompt frames
-                for _, child in ipairs(pg:GetChildren()) do
-                    if child:IsA("ScreenGui") and child.Enabled then
-                        -- look for quest complete text nearby
-                        local hasQuest = false
-                        for _, d in ipairs(child:GetDescendants()) do
-                            if d:IsA("TextLabel") or d:IsA("TextButton") then
-                                local tx = ""
-                                pcall(function() tx = tostring(d.Text or "") end)
-                                if tx:find("퀘스트") or tx:find("미션") or tx:find("반복") or tx:lower():find("quest") then
-                                    hasQuest = true
-                                    break
-                                end
-                            end
-                        end
-                        if hasQuest then
-                            if tryClickYes(child) then
-                                notify("Quest", "Yes")
-                                task.wait(0.8)
-                            end
-                        end
-                    end
-                end
+            local hit = scanAndClick(
+                { "Yes", "예", "yes" },
+                { "퀘스트", "미션", "반복", "Quest", "Complete", "완료" }
+            )
+            if hit then
+                notify("Quest", "Yes")
+                tryQuestRemotes()
+                task.wait(0.6)
             end
         end
-        task.wait(0.35)
+        if autoReadyUp then
+            local hit = scanAndClick({ "Ready Up", "ReadyUp", "ready up" }, nil)
+            if hit then
+                notify("Raid", "Ready Up")
+                task.wait(0.8)
+            end
+        end
+        task.wait(0.25)
+    end
+end)
+
+-- On load: press 들어가기 / Enter if present
+task.defer(function()
+    task.wait(1.2)
+    for _ = 1, 8 do
+        if scanAndClick({ "들어가기", "Enter", "Play", "시작" }, nil) then
+            notify("Boot", "Enter")
+            break
+        end
+        task.wait(0.5)
     end
 end)
 
@@ -5039,6 +5128,81 @@ MobFarmGroup:AddToggle("AutoQuestYes", {
         notify("AutoQuestYes", v and "ON" or "OFF")
     end,
 })
+
+----------------------------------------------------------------
+-- Death → re-equip key
+----------------------------------------------------------------
+local deathReequipOn = false
+local deathReequipKey = "1"
+local deathKeyMap = {
+    ["1"] = Enum.KeyCode.One,
+    ["2"] = Enum.KeyCode.Two,
+    ["3"] = Enum.KeyCode.Three,
+    ["4"] = Enum.KeyCode.Four,
+    R = Enum.KeyCode.R,
+    E = Enum.KeyCode.E,
+    Z = Enum.KeyCode.Z,
+    X = Enum.KeyCode.X,
+    C = Enum.KeyCode.C,
+    F = Enum.KeyCode.F,
+    Q = Enum.KeyCode.Q,
+}
+local lastDeathStamp = 0
+
+local function watchDeath()
+    local function hookChar(char)
+        local hum = char:WaitForChild("Humanoid", 10)
+        if not hum then return end
+        hum.Died:Connect(function()
+            lastDeathStamp = tick()
+            if not deathReequipOn then return end
+            task.delay(0.35, function()
+                if not deathReequipOn then return end
+                local code = deathKeyMap[deathReequipKey]
+                if code then
+                    pcall(function()
+                        local vim = virtualInputManager or game:GetService("VirtualInputManager")
+                        vim:SendKeyEvent(true, code, false, game)
+                        task.wait(0.05)
+                        vim:SendKeyEvent(false, code, false, game)
+                    end)
+                    notify("Death", "re-equip " .. tostring(deathReequipKey))
+                end
+            end)
+        end)
+    end
+    if Player.Character then task.spawn(hookChar, Player.Character) end
+    Player.CharacterAdded:Connect(function(c)
+        task.wait(0.2)
+        hookChar(c)
+    end)
+end
+watchDeath()
+
+MobFarmGroup:AddToggle("DeathReequip", {
+    Text = "Death re-equip",
+    Default = false,
+    Callback = function(v)
+        deathReequipOn = v
+        notify("DeathReequip", v and "ON" or "OFF")
+    end,
+})
+MobFarmGroup:AddDropdown("DeathReequipKey", {
+    Values = { "1", "2", "3", "4", "R", "E", "Z", "X", "C", "F", "Q" },
+    Default = 1,
+    Multi = false,
+    Text = "Re-equip key",
+    Callback = function(v)
+        if type(v) == "string" then
+            deathReequipKey = v
+        elseif type(v) == "table" then
+            for k, on in pairs(v) do
+                if on and type(k) == "string" then deathReequipKey = k break end
+                if on and type(on) == "string" then deathReequipKey = on break end
+            end
+        end
+    end,
+})
 MobFarmGroup:AddLabel("Behind-only · nearest matching mob · no hover")
 
 MobFarmGroup:AddButton({
@@ -5469,17 +5633,19 @@ local function raidPickTarget()
     return nil
 end
 
--- Raid: pure kill loop, no air heal / no hover
+-- Raid: pure kill loop — fast retarget (no empty-spot linger)
 task.spawn(function()
     while not unloaded do
         if not raidFarmOn then
-            task.wait(0.4)
+            task.wait(0.35)
         else
             local target = raidPickTarget()
             if target then
                 farmOne(target)
+            else
+                task.wait(0.05)
             end
-            task.wait(0.15)
+            task.wait(0.03)
         end
     end
 end)
@@ -5514,7 +5680,8 @@ RaidFarmGroup:AddLabel("Makima fixed targets:")
 for _, name in ipairs(MAKIMA_RAID_DISPLAY) do
     RaidFarmGroup:AddLabel("• " .. name)
 end
-RaidFarmGroup:AddLabel("Makima order: Longsword User > Fake Makima > Makima")
+RaidFarmGroup:AddLabel("Makima order:")
+RaidFarmGroup:AddLabel("Longsword User > Fake Makima > Makima")
 
 local function pressKeyT()
     pcall(function()
@@ -5524,6 +5691,51 @@ local function pressKeyT()
         vim:SendKeyEvent(false, Enum.KeyCode.T, false, game)
     end)
 end
+
+local raidDifficulty = "Normal" -- Normal | Hard | Insane
+RaidFarmGroup:AddDropdown("RaidDifficulty", {
+    Values = { "Normal", "Hard", "Insane" },
+    Default = 1,
+    Multi = false,
+    Text = "Zombie difficulty",
+    Callback = function(v)
+        if type(v) == "table" then
+            for k, on in pairs(v) do
+                if on and type(k) == "string" then raidDifficulty = k break end
+                if on and type(on) == "string" then raidDifficulty = on break end
+            end
+        elseif type(v) == "string" then
+            raidDifficulty = v
+        end
+        notify("RaidDiff", raidDifficulty)
+        -- try click matching difficulty button / remote when zombie mode
+        if raidMode == "Zombie" then
+            task.spawn(function()
+                scanAndClick({ raidDifficulty, "노말", "하드", "미친", "Normal", "Hard", "Insane" }, nil)
+                local ev = ReplicatedStorage:FindFirstChild("events")
+                local remote = ev and ev:FindFirstChild("remote")
+                if remote then
+                    for _, args in ipairs({
+                        { "SetDifficulty", raidDifficulty },
+                        { "RaidDifficulty", raidDifficulty },
+                        { "Difficulty", raidDifficulty },
+                    }) do
+                        pcall(function() remote:FireServer(unpack(args)) end)
+                    end
+                end
+            end)
+        end
+    end,
+})
+RaidFarmGroup:AddLabel("Zombie only · Makima has no difficulty")
+RaidFarmGroup:AddToggle("AutoReadyUp", {
+    Text = "Auto Ready Up (raid end)",
+    Default = true,
+    Callback = function(v)
+        autoReadyUp = v
+        notify("ReadyUp", v and "ON" or "OFF")
+    end,
+})
 
 RaidFarmGroup:AddToggle("RaidFarm", {
     Text = "Raid Farm",
