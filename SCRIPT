@@ -18,171 +18,7 @@ do
     end
     g.CMDH_DEVILHEART_RUNNING = true
 end
-
-----------------------------------------------------------------
--- Env cloak + anti-kick (hide executor APIs from game callers)
-----------------------------------------------------------------
-pcall(function()
-    local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
-    local GEN = (getgenv and getgenv()) or _G
-    local HookFunction = GEN.hookfunction or hookfunction
-    local NewCClosure = GEN.newcclosure or newcclosure
-    local CheckCaller = GEN.checkcaller or checkcaller
-    local GetCallingScript = GEN.getcallingscript or getcallingscript
-    if type(HookFunction) ~= "function" or type(NewCClosure) ~= "function" then
-        warn("[CMDH] cloak skipped — hookfunction/newcclosure unavailable")
-        return
-    end
-    if type(getfenv) ~= "function" then
-        warn("[CMDH] cloak skipped — getfenv unavailable")
-        return
-    end
-    if GEN.CMDH_CLOAK_INSTALLED then
-        return
-    end
-
-    local MARKER = {
-        hookfunction = true, hookmetamethod = true, newcclosure = true, clonefunction = true,
-        checkcaller = true, getnamecallmethod = true, getcallingscript = true,
-        isexecutorclosure = true, isourclosure = true, iscclosure = true, islclosure = true,
-        getgc = true, getreg = true, getrawmetatable = true, setreadonly = true, isreadonly = true,
-        make_writeable = true, make_readonly = true, getconnections = true, getcallbackvalue = true,
-        getscriptclosure = true, getscriptbytecode = true, getsenv = true, getmenv = true,
-        getloadedmodules = true, getscripts = true, getrunningscripts = true,
-        getconstants = true, getconstant = true, setconstant = true,
-        getupvalues = true, getupvalue = true, setupvalue = true,
-        getprotos = true, getproto = true, setproto = true,
-        getgenv = true, getrenv = true, identifyexecutor = true, getexecutorname = true,
-        syn = true, KRNL_LOADED = true, fluxus = true, SENTINEL_LOADED = true,
-        readfile = true, writefile = true, appendfile = true, loadfile = true, listfiles = true,
-        makefolder = true, delfile = true, delfolder = true, isfile = true, isfolder = true,
-        setclipboard = true, toclipboard = true, request = true, http_request = true, httprequest = true,
-        WebSocket = true, gethui = true, protect_gui = true, unprotect_gui = true, cloneref = true,
-        fireclickdetector = true, fireproximityprompt = true, firetouchinterest = true, firesignal = true,
-        gethiddenproperty = true, sethiddenproperty = true, setscriptable = true,
-        Drawing = true, queue_on_teleport = true, queueonteleport = true,
-    }
-
-    local function callerIsGame()
-        if type(GetCallingScript) == "function" then
-            local ok, scr = pcall(GetCallingScript)
-            if ok and typeof(scr) == "Instance" then
-                return true, scr
-            end
-        end
-        if type(CheckCaller) == "function" then
-            local ok, own = pcall(CheckCaller)
-            if ok then
-                return not own, nil
-            end
-        end
-        return true, nil
-    end
-
-    local function copySanitized(src, selfRef)
-        if type(src) ~= "table" then
-            return src
-        end
-        local out = {}
-        local k, v = next(src, nil)
-        while k ~= nil do
-            local hide = (type(k) == "string" and MARKER[k] == true)
-            if not hide then
-                if k == "_G" and type(v) == "table" then
-                    out[k] = out
-                else
-                    out[k] = v
-                end
-            end
-            k, v = next(src, k)
-        end
-        if selfRef and src == selfRef then
-            out._G = out
-        end
-        return out
-    end
-
-    local OriginalGetgenv = rawget(GEN, "getgenv")
-    local OriginalGetrenv = rawget(GEN, "getrenv")
-
-    local OldRawget
-    OldRawget = HookFunction(rawget, NewCClosure(function(t, k)
-        local gameCaller = callerIsGame()
-        if gameCaller and type(k) == "string" and MARKER[k] then
-            return nil
-        end
-        return OldRawget(t, k)
-    end))
-
-    local OldGetfenv
-    OldGetfenv = HookFunction(getfenv, NewCClosure(function(target)
-        local query = target
-        if type(target) == "number" then
-            query = target + 1
-        elseif target == nil then
-            query = 2
-        end
-        local env = OldGetfenv(query)
-        local gameCaller = callerIsGame()
-        if gameCaller and type(env) == "table" then
-            return copySanitized(env, GEN)
-        end
-        return env
-    end))
-
-    if type(OriginalGetgenv) == "function" and OriginalGetgenv ~= getfenv then
-        local OldGetgenv
-        OldGetgenv = HookFunction(OriginalGetgenv, NewCClosure(function(...)
-            local env = OldGetgenv(...)
-            local gameCaller = callerIsGame()
-            if gameCaller and type(env) == "table" then
-                return copySanitized(env, GEN)
-            end
-            return env
-        end))
-    end
-
-    if type(OriginalGetrenv) == "function" and OriginalGetrenv ~= OriginalGetgenv and OriginalGetrenv ~= getfenv then
-        local OldGetrenv
-        OldGetrenv = HookFunction(OriginalGetrenv, NewCClosure(function(...)
-            local env = OldGetrenv(...)
-            local gameCaller = callerIsGame()
-            if gameCaller and type(env) == "table" then
-                return copySanitized(env, GEN)
-            end
-            return env
-        end))
-    end
-
-    local KickInstalled = false
-    do
-        local ok, kickMethod = pcall(function()
-            return LocalPlayer.Kick
-        end)
-        if ok and type(kickMethod) == "function" then
-            local OldKick
-            OldKick = HookFunction(kickMethod, NewCClosure(function(self, ...)
-                local gameCaller = callerIsGame()
-                if gameCaller and self == LocalPlayer then
-                    return nil
-                end
-                return OldKick(self, ...)
-            end))
-            KickInstalled = true
-        end
-    end
-
-    GEN.CMDH_CLOAK_INSTALLED = true
-    GEN.CMDH_CLOAK_STATUS = {
-        installed = true,
-        env_cloak = true,
-        rawget_cloak = true,
-        anti_kick = KickInstalled,
-    }
-    print("[CMDH] env cloak ON · anti_kick=" .. tostring(KickInstalled))
-end)
-
+print("[CMDH] instance lock OK")
 
 -- Safe _G API stubs (prevents nil.SetEnabled / IsRedirectEnabled)
 do
@@ -3703,7 +3539,11 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
 
-local Player = Players.LocalPlayer
+local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+if not Player then
+    warn("[CMDH] LocalPlayer missing")
+    return
+end
 local PlaceId = game.PlaceId
 local JobId = game.JobId
 local REPO = "https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/"
@@ -3742,6 +3582,173 @@ if not Library then
     warn("[CMDH] Linoria Library failed to load (HttpGet/loadstring nil)")
     return
 end
+
+----------------------------------------------------------------
+-- Env cloak + anti-kick (hide executor APIs from game callers)
+----------------------------------------------------------------
+pcall(function()
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local GEN = (getgenv and getgenv()) or _G
+    local HookFunction = GEN.hookfunction or hookfunction
+    local NewCClosure = GEN.newcclosure or newcclosure
+    local CheckCaller = GEN.checkcaller or checkcaller
+    local GetCallingScript = GEN.getcallingscript or getcallingscript
+    if type(HookFunction) ~= "function" or type(NewCClosure) ~= "function" then
+        warn("[CMDH] cloak skipped — hookfunction/newcclosure unavailable")
+        return
+    end
+    if type(getfenv) ~= "function" then
+        warn("[CMDH] cloak skipped — getfenv unavailable")
+        return
+    end
+    if GEN.CMDH_CLOAK_INSTALLED then
+        return
+    end
+
+    local MARKER = {
+        hookfunction = true, hookmetamethod = true, newcclosure = true, clonefunction = true,
+        checkcaller = true, getnamecallmethod = true, getcallingscript = true,
+        isexecutorclosure = true, isourclosure = true, iscclosure = true, islclosure = true,
+        getgc = true, getreg = true, getrawmetatable = true, setreadonly = true, isreadonly = true,
+        make_writeable = true, make_readonly = true, getconnections = true, getcallbackvalue = true,
+        getscriptclosure = true, getscriptbytecode = true, getsenv = true, getmenv = true,
+        getloadedmodules = true, getscripts = true, getrunningscripts = true,
+        getconstants = true, getconstant = true, setconstant = true,
+        getupvalues = true, getupvalue = true, setupvalue = true,
+        getprotos = true, getproto = true, setproto = true,
+        getgenv = true, getrenv = true, identifyexecutor = true, getexecutorname = true,
+        syn = true, KRNL_LOADED = true, fluxus = true, SENTINEL_LOADED = true,
+        readfile = true, writefile = true, appendfile = true, loadfile = true, listfiles = true,
+        makefolder = true, delfile = true, delfolder = true, isfile = true, isfolder = true,
+        setclipboard = true, toclipboard = true, request = true, http_request = true, httprequest = true,
+        WebSocket = true, gethui = true, protect_gui = true, unprotect_gui = true, cloneref = true,
+        fireclickdetector = true, fireproximityprompt = true, firetouchinterest = true, firesignal = true,
+        gethiddenproperty = true, sethiddenproperty = true, setscriptable = true,
+        Drawing = true, queue_on_teleport = true, queueonteleport = true,
+    }
+
+    local function callerIsGame()
+        if type(GetCallingScript) == "function" then
+            local ok, scr = pcall(GetCallingScript)
+            if ok and typeof(scr) == "Instance" then
+                return true, scr
+            end
+        end
+        if type(CheckCaller) == "function" then
+            local ok, own = pcall(CheckCaller)
+            if ok then
+                return not own, nil
+            end
+        end
+        return true, nil
+    end
+
+    local function copySanitized(src, selfRef)
+        if type(src) ~= "table" then
+            return src
+        end
+        local out = {}
+        local k, v = next(src, nil)
+        while k ~= nil do
+            local hide = (type(k) == "string" and MARKER[k] == true)
+            if not hide then
+                if k == "_G" and type(v) == "table" then
+                    out[k] = out
+                else
+                    out[k] = v
+                end
+            end
+            k, v = next(src, k)
+        end
+        if selfRef and src == selfRef then
+            out._G = out
+        end
+        return out
+    end
+
+    local OriginalGetgenv = rawget(GEN, "getgenv")
+    local OriginalGetrenv = rawget(GEN, "getrenv")
+
+    local OldRawget
+    OldRawget = HookFunction(rawget, NewCClosure(function(t, k)
+        local gameCaller = callerIsGame()
+        if gameCaller and type(k) == "string" and MARKER[k] then
+            return nil
+        end
+        return OldRawget(t, k)
+    end))
+
+    local OldGetfenv
+    OldGetfenv = HookFunction(getfenv, NewCClosure(function(target)
+        local query = target
+        if type(target) == "number" then
+            query = target + 1
+        elseif target == nil then
+            query = 2
+        end
+        local env = OldGetfenv(query)
+        local gameCaller = callerIsGame()
+        if gameCaller and type(env) == "table" then
+            return copySanitized(env, GEN)
+        end
+        return env
+    end))
+
+    if type(OriginalGetgenv) == "function" and OriginalGetgenv ~= getfenv then
+        local OldGetgenv
+        OldGetgenv = HookFunction(OriginalGetgenv, NewCClosure(function(...)
+            local env = OldGetgenv(...)
+            local gameCaller = callerIsGame()
+            if gameCaller and type(env) == "table" then
+                return copySanitized(env, GEN)
+            end
+            return env
+        end))
+    end
+
+    if type(OriginalGetrenv) == "function" and OriginalGetrenv ~= OriginalGetgenv and OriginalGetrenv ~= getfenv then
+        local OldGetrenv
+        OldGetrenv = HookFunction(OriginalGetrenv, NewCClosure(function(...)
+            local env = OldGetrenv(...)
+            local gameCaller = callerIsGame()
+            if gameCaller and type(env) == "table" then
+                return copySanitized(env, GEN)
+            end
+            return env
+        end))
+    end
+
+    local KickInstalled = false
+    do
+        local ok, kickMethod = pcall(function()
+            return LocalPlayer.Kick
+        end)
+        if ok and type(kickMethod) == "function" then
+            local OldKick
+            OldKick = HookFunction(kickMethod, NewCClosure(function(self, ...)
+                local gameCaller = callerIsGame()
+                if gameCaller and self == LocalPlayer then
+                    return nil
+                end
+                return OldKick(self, ...)
+            end))
+            KickInstalled = true
+        end
+    end
+
+    GEN.CMDH_CLOAK_INSTALLED = true
+    GEN.CMDH_CLOAK_STATUS = {
+        installed = true,
+        env_cloak = true,
+        rawget_cloak = true,
+        anti_kick = KickInstalled,
+    }
+    print("[CMDH] env cloak ON · anti_kick=" .. tostring(KickInstalled))
+end)
+
+
+
 
 local function apCall(name, ...)
     local api = rawget(_G, "AutoParryAPI")
@@ -5450,16 +5457,10 @@ end
 -- Config (Linoria SaveManager) + queue URL
 ----------------------------------------------------------------
 do
-    local okSM, SaveManager = pcall(function()
-        return loadstring(game:HttpGet(REPO .. "addons/SaveManager.lua"))()
-    end)
-    if not okSM then
-        okSM, SaveManager = pcall(function()
-            return loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/addons/SaveManager.lua"))()
-        end)
-    end
+    local SaveManager = fetchLib("addons/SaveManager.lua")
+    local okSM = SaveManager ~= nil
     pcall(function()
-        local ThemeManager = loadstring(game:HttpGet(REPO .. "addons/ThemeManager.lua"))()
+        local ThemeManager = fetchLib("addons/ThemeManager.lua")
         if ThemeManager then
             ThemeManager:SetLibrary(Library)
             ThemeManager:SetFolder("CMDHHub")
