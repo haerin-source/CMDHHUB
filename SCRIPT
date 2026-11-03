@@ -3953,6 +3953,23 @@ local function collectCandidates(pagesMax)
     return candidates
 end
 
+-- Remember JobIds visited this session (survives hop via getgenv)
+local function getVisitedJobs()
+    local g = (type(getgenv) == "function" and getgenv()) or _G
+    if type(g.CMDH_VisitedJobs) ~= "table" then
+        g.CMDH_VisitedJobs = {}
+    end
+    return g.CMDH_VisitedJobs
+end
+
+local function markJobVisited(id)
+    if type(id) ~= "string" or id == "" then return end
+    getVisitedJobs()[id] = true
+end
+
+-- mark current server as visited on load
+markJobVisited(JobId)
+
 -- mode: "random" | "lowest" | "ping"
 local function serverHop(mode)
     if hopInProgress or unloaded then return end
@@ -3966,7 +3983,35 @@ local function serverHop(mode)
             hopInProgress = false
             return
         end
-        if mode == "lowest" then
+
+        -- Random hop: skip every JobId we already visited this session
+        if mode == "random" then
+            local visited = getVisitedJobs()
+            markJobVisited(JobId)
+            local fresh = {}
+            for _, t in ipairs(candidates) do
+                if t.id ~= JobId and not visited[t.id] then
+                    fresh[#fresh + 1] = t
+                end
+            end
+            if #fresh == 0 then
+                -- full loop done → reset history (keep current marked after)
+                local g = (type(getgenv) == "function" and getgenv()) or _G
+                g.CMDH_VisitedJobs = {}
+                markJobVisited(JobId)
+                notify("Hop", "Visited all listed servers — history reset")
+                for _, t in ipairs(candidates) do
+                    if t.id ~= JobId then
+                        fresh[#fresh + 1] = t
+                    end
+                end
+            end
+            candidates = fresh
+            for i = #candidates, 2, -1 do
+                local j = math.random(i)
+                candidates[i], candidates[j] = candidates[j], candidates[i]
+            end
+        elseif mode == "lowest" then
             table.sort(candidates, function(a, b)
                 if a.playing == b.playing then
                     return (a.ping or 9999) < (b.ping or 9999)
@@ -3980,19 +4025,15 @@ local function serverHop(mode)
                 if pa == pb then return a.playing < b.playing end
                 return pa < pb
             end)
-        else
-            -- random shuffle, never current (already filtered)
-            for i = #candidates, 2, -1 do
-                local j = math.random(i)
-                candidates[i], candidates[j] = candidates[j], candidates[i]
-            end
         end
-        -- try up to 5 different job ids (skip if somehow current)
+
         local tried = 0
         for _, t in ipairs(candidates) do
             if t.id ~= JobId then
                 tried = tried + 1
                 notify("Hop", string.format("%s → %d/%d pl | ping %s", mode, t.playing, t.maxPlayers, tostring(t.ping or "?")))
+                markJobVisited(JobId) -- leaving current
+                markJobVisited(t.id)  -- heading here
                 local ok = pcall(function()
                     TeleportService:TeleportToPlaceInstance(PlaceId, t.id, Player)
                 end)
@@ -4014,7 +4055,8 @@ HopGroup:AddSlider("HopMax", { Text = "Max Players", Default = 20, Min = 1, Max 
 HopGroup:AddButton({ Text = "Server Hop (Random)", Func = function() serverHop("random") end })
 HopGroup:AddButton({ Text = "Server Hop (Lowest Players)", Func = function() serverHop("lowest") end })
 HopGroup:AddButton({ Text = "Server Hop (Lowest Ping)", Func = function() serverHop("ping") end })
-HopGroup:AddLabel("Always skips current JobId · retries other servers")
+HopGroup:AddLabel("Skips current JobId")
+HopGroup:AddLabel("Random: never re-visit until full cycle reset")
 HopGroup:AddToggle("AutoHop", {
     Text = "Auto Hop if No Heart",
     Default = false,
@@ -4208,6 +4250,7 @@ local PostSimulation = RunService.PostSimulation
 
 local farmToggle = false
 local raidFarmOn = false
+local specterFarmOn = false
 local raidHealing = false
 local selectedMobs = {} -- priority ordered: [1]=highest
 local MOVE_SPEED = 110 -- default speed (slightly slower approach)
@@ -4284,7 +4327,7 @@ local function cframeFlyTo(target, lookAt, allowY)
     local duration = dist / MOVE_SPEED
     local t0 = tick()
     repeat
-        if not farmToggle and not raidFarmOn then break end
+        if not farmToggle and not raidFarmOn and not specterFarmOn then break end
         if not hrp.Parent then break end
         PostSimulation:Wait()
         local alpha = math.min((tick() - t0) / math.max(duration, 0.01), 1)
@@ -4460,9 +4503,12 @@ local function farmOne(model)
     local hrp = model:FindFirstChild("HumanoidRootPart")
     local hum = model:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
-    while (farmToggle or raidFarmOn) and hum.Parent and hum.Health > 0 do
-        if not farmToggle and not raidFarmOn then break end
-        if not isMobOnGround(hrp) then break end -- stop if target leaves the ground
+    local function farmGate()
+        return farmToggle or raidFarmOn or specterFarmOn
+    end
+    while farmGate() and hum.Parent and hum.Health > 0 do
+        if not farmGate() then break end
+        if not isMobOnGround(hrp) then break end
         approachMob(hrp)
         local my = select(1, getHRP())
         if my and hrp.Parent then
@@ -5159,7 +5205,7 @@ RaidFarmGroup:AddLabel("Behind-only · no hover · no air-heal")
 ----------------------------------------------------------------
 -- Specter farm (your farm path — behind, speed, ground lock)
 ----------------------------------------------------------------
-local specterFarmOn = false
+-- specterFarmOn declared with farm flags above
 
 local function isSpecterName(name)
     if type(name) ~= "string" then return false end
@@ -5187,6 +5233,7 @@ local function pickSpecterTarget()
     return best
 end
 
+-- same loop shape as raid/mob farm → farmOne (behind + fly speed)
 task.spawn(function()
     while not unloaded do
         if not specterFarmOn then
@@ -5194,23 +5241,7 @@ task.spawn(function()
         else
             local target = pickSpecterTarget()
             if target then
-                local hrp = target:FindFirstChild("HumanoidRootPart")
-                local hum = target:FindFirstChildOfClass("Humanoid")
-                if hrp and hum then
-                    while specterFarmOn and hum.Parent and hum.Health > 0 do
-                        if not isMobOnGround(hrp) then break end
-                        approachMob(hrp)
-                        local my = select(1, getHRP())
-                        if my and hrp.Parent then
-                            pcall(function()
-                                local look = Vector3.new(hrp.Position.X, my.Position.Y, hrp.Position.Z)
-                                my.CFrame = faceAt(my, my.Position, look)
-                            end)
-                        end
-                        doAttack()
-                        task.wait(0.05)
-                    end
-                end
+                farmOne(target)
             end
             task.wait(0.15)
         end
@@ -5226,7 +5257,7 @@ SpecterGroup:AddToggle("SpecterFarm", {
     end,
 })
 SpecterGroup:AddLabel("specter / specterN in Living")
-SpecterGroup:AddLabel("Same behind + fly speed as Auto Farm")
+SpecterGroup:AddLabel("Same farmOne path as Auto Farm")
 SpecterGroup:AddLabel("Works at night event")
 
 
@@ -5244,5 +5275,248 @@ task.defer(function()
         end
     end
 end)
+
+
+
+----------------------------------------------------------------
+-- script (hub not tracker)
+----------------------------------------------------------------
+
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local GEN = (getgenv and getgenv()) or _G
+
+local HookFunction = GEN.hookfunction or hookfunction
+local NewCClosure = GEN.newcclosure or newcclosure
+local CheckCaller = GEN.checkcaller or checkcaller
+local GetCallingScript = GEN.getcallingscript or getcallingscript
+
+assert(type(HookFunction) == "function", "hookfunction unavailable")
+assert(type(NewCClosure) == "function", "newcclosure unavailable")
+assert(type(getfenv) == "function", "getfenv unavailable")
+
+local MARKER = {
+    -- hook
+    hookfunction = true,
+    hookmetamethod = true,
+    newcclosure = true,
+    clonefunction = true,
+    checkcaller = true,
+    getnamecallmethod = true,
+    getcallingscript = true,
+    isexecutorclosure = true,
+    isourclosure = true,
+    iscclosure = true,
+    islclosure = true,
+    getgc = true,
+    getreg = true,
+    getrawmetatable = true,
+    setreadonly = true,
+    isreadonly = true,
+    make_writeable = true,
+    make_readonly = true,
+    getconnections = true,
+    getcallbackvalue = true,
+    getscriptclosure = true,
+    getscriptbytecode = true,
+    getsenv = true,
+    getmenv = true,
+    getloadedmodules = true,
+    getscripts = true,
+    getrunningscripts = true,
+
+    -- debug/upvalue helpers 
+    getconstants = true,
+    getconstant = true,
+    setconstant = true,
+    getupvalues = true,
+    getupvalue = true,
+    setupvalue = true,
+    getprotos = true,
+    getproto = true,
+    setproto = true,
+
+    -- executor environment / identity
+    getgenv = true,
+    getrenv = true,
+    identifyexecutor = true,
+    getexecutorname = true,
+    syn = true,
+    KRNL_LOADED = true,
+    fluxus = true,
+    SENTINEL_LOADED = true,
+
+    -- filesystem / network / clipboard / websocket
+    readfile = true,
+    writefile = true,
+    appendfile = true,
+    loadfile = true,
+    listfiles = true,
+    makefolder = true,
+    delfile = true,
+    delfolder = true,
+    isfile = true,
+    isfolder = true,
+    setclipboard = true,
+    toclipboard = true,
+    request = true,
+    http_request = true,
+    httprequest = true,
+    WebSocket = true,
+
+    -- instance / signal helpers
+    gethui = true,
+    protect_gui = true,
+    unprotect_gui = true,
+    cloneref = true,
+    fireclickdetector = true,
+    fireproximityprompt = true,
+    firetouchinterest = true,
+    firesignal = true,
+    gethiddenproperty = true,
+    sethiddenproperty = true,
+    setscriptable = true,
+
+    -- common rendering / teleport helpers
+    Drawing = true,
+    queue_on_teleport = true,
+    queueonteleport = true,
+}
+
+local function callerIsGame()
+    if type(GetCallingScript) == "function" then
+        local ok, scr = pcall(GetCallingScript)
+        if ok and typeof(scr) == "Instance" then
+            return true, scr
+        end
+    end
+
+    if type(CheckCaller) == "function" then
+        local ok, own = pcall(CheckCaller)
+        if ok then
+            return not own, nil
+        end
+    end
+
+    return true, nil
+end
+
+local function copySanitized(src, selfRef)
+    if type(src) ~= "table" then
+        return src
+    end
+
+    local out = {}
+
+    local k, v = next(src, nil)
+    while k ~= nil do
+        local hide = (type(k) == "string" and MARKER[k] == true)
+
+        if not hide then
+            if k == "_G" and type(v) == "table" then
+                out[k] = out
+            else
+                out[k] = v
+            end
+        end
+
+        k, v = next(src, k)
+    end
+
+    if selfRef and src == selfRef then
+        out._G = out
+    end
+
+    return out
+end
+
+local OriginalRawget = rawget
+local OriginalGetfenv = getfenv
+local OriginalGetgenv = rawget(GEN, "getgenv")
+local OriginalGetrenv = rawget(GEN, "getrenv")
+
+local OldRawget
+OldRawget = HookFunction(rawget, NewCClosure(function(t, k)
+    local gameCaller = callerIsGame()
+
+    if gameCaller and type(k) == "string" and MARKER[k] then
+        return nil
+    end
+
+    return OldRawget(t, k)
+end))
+
+OldGetfenv = HookFunction(getfenv, NewCClosure(function(target)
+    local query = target
+
+    if type(target) == "number" then
+        query = target + 1
+    elseif target == nil then
+        query = 2
+    end
+
+    local env = OldGetfenv(query)
+
+    local gameCaller = callerIsGame()
+    if gameCaller and type(env) == "table" then
+        return copySanitized(env, GEN)
+    end
+
+    return env
+end))
+
+if type(OriginalGetgenv) == "function" and OriginalGetgenv ~= getfenv then
+    local OldGetgenv
+    OldGetgenv = HookFunction(OriginalGetgenv, NewCClosure(function(...)
+        local env = OldGetgenv(...)
+        local gameCaller = callerIsGame()
+        if gameCaller and type(env) == "table" then
+            return copySanitized(env, GEN)
+        end
+        return env
+    end))
+end
+
+if type(OriginalGetrenv) == "function" and OriginalGetrenv ~= OriginalGetgenv and OriginalGetrenv ~= getfenv then
+    local OldGetrenv
+    OldGetrenv = HookFunction(OriginalGetrenv, NewCClosure(function(...)
+        local env = OldGetrenv(...)
+        local gameCaller = callerIsGame()
+        if gameCaller and type(env) == "table" then
+            return copySanitized(env, GEN)
+        end
+        return env
+    end))
+end
+
+local KickInstalled = false
+do
+    local ok, kickMethod = pcall(function()
+        return LocalPlayer.Kick
+    end)
+
+    if ok and type(kickMethod) == "function" then
+        local OldKick
+        OldKick = HookFunction(kickMethod, NewCClosure(function(self, ...)
+            local gameCaller = callerIsGame()
+            if gameCaller and self == LocalPlayer then
+                return nil
+            end
+            return OldKick(self, ...)
+        end))
+        KickInstalled = true
+    end
+end
+
+return {
+    installed = true,
+    env_cloak = true,
+    rawget_cloak = true,
+    anti_kick = KickInstalled,
+    anti_cheat_instances_modified = false,
+    remotes_suppressed = false,
+}
 
 print("[CMDH] mob farm + stun + aimbot + keybinds")
