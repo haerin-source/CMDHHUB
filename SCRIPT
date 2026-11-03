@@ -3614,6 +3614,7 @@ local Tabs = {
     Server = Window:AddTab("Server"),
     Codes = Window:AddTab("Codes"),
     Farm = Window:AddTab("Farm"),
+    Player = Window:AddTab("Player"),
     Settings = Window:AddTab("Settings"),
 }
 
@@ -3636,6 +3637,8 @@ local HybridCodeGroup = Tabs.Codes:AddLeftGroupbox("Hybrid Reset")
 local FiendCodeGroup = Tabs.Codes:AddRightGroupbox("Fiend Reset")
 local AfkGroup = Tabs.Settings:AddRightGroupbox("AFK")
 local UnloadGroup = Tabs.Settings:AddLeftGroupbox("Script")
+local PlayerMoveGroup = Tabs.Player:AddLeftGroupbox("Movement")
+local SpecterGroup = Tabs.Farm:AddRightGroupbox("Specter")
 
 local unloaded = false
 local uiVisible = true
@@ -4114,6 +4117,56 @@ local function unloadScript()
 end
 
 if type(getgenv) == "function" then getgenv().DevilHeartUnload = unloadScript end
+
+----------------------------------------------------------------
+-- Player: Noclip
+----------------------------------------------------------------
+local noclipEnabled = false
+local noclipConnection = nil
+local NOCLIP_JITTER = 0.05
+
+local function setNoclip(on)
+    noclipEnabled = on and true or false
+    if noclipConnection then
+        pcall(function() noclipConnection:Disconnect() end)
+        noclipConnection = nil
+    end
+    if not noclipEnabled then
+        notify("Noclip", "OFF")
+        return
+    end
+    notify("Noclip", "ON")
+    local jitterSeed = math.random(1, 9999)
+    noclipConnection = RunService.Stepped:Connect(function()
+        if unloaded or not noclipEnabled then return end
+        pcall(function()
+            local char = Player.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not char or not hrp then return end
+            for _, v in pairs(char:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.CanCollide = false
+                end
+            end
+            local offset = Vector3.new(
+                math.sin(tick() * 10 + jitterSeed) * NOCLIP_JITTER,
+                0,
+                math.cos(tick() * 10 + jitterSeed) * NOCLIP_JITTER
+            )
+            hrp.CFrame = hrp.CFrame + offset
+        end)
+    end)
+end
+
+PlayerMoveGroup:AddToggle("Noclip", {
+    Text = "Noclip",
+    Default = false,
+    Callback = function(v)
+        setNoclip(v)
+    end,
+})
+PlayerMoveGroup:AddLabel("CanCollide off + micro jitter")
+
 UnloadGroup:AddButton({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
 Library:OnUnload(function() unloaded = true end)
 
@@ -4827,15 +4880,22 @@ do
             return loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/addons/SaveManager.lua"))()
         end)
     end
+    pcall(function()
+        local ThemeManager = loadstring(game:HttpGet(REPO .. "addons/ThemeManager.lua"))()
+        if ThemeManager then
+            ThemeManager:SetLibrary(Library)
+            ThemeManager:SetFolder("CMDHHub")
+            ThemeManager:ApplyToTab(Tabs.Settings)
+            _G.CMDH_ThemeManager = ThemeManager
+        end
+    end)
     if okSM and SaveManager then
         SaveManager:SetLibrary(Library)
-        pcall(function() SaveManager:IgnoreThemeSettings() end)
         pcall(function() SaveManager:SetIgnoreIndexes({}) end)
         SaveManager:SetFolder("CMDHHub")
         SaveManager:BuildConfigSection(Tabs.Settings)
-        -- do NOT LoadAutoload here — RaidFarm/MobFarm toggles are registered later
         _G.CMDH_SaveManager = SaveManager
-        print("[CMDH] SaveManager ON — folder CMDHHub/ (autoload deferred to end)")
+        print("[CMDH] SaveManager + ThemeManager ON — folder CMDHHub/")
     else
         warn("[CMDH] SaveManager failed to load")
     end
@@ -4873,7 +4933,8 @@ task.defer(function()
         "StunMon",
         "MobAimbot",
         "RaidFarm",
-    }) do
+            "Noclip",
+            "SpecterFarm"}) do
         bindToggle(name)
     end
     print("[CMDH] keybinds ready — set each toggle key in the UI")
@@ -5094,6 +5155,81 @@ RaidFarmGroup:AddLabel("Behind-only · no hover · no air-heal")
 
 
 ----------------------------------------------------------------
+
+----------------------------------------------------------------
+-- Specter farm (your farm path — behind, speed, ground lock)
+----------------------------------------------------------------
+local specterFarmOn = false
+
+local function isSpecterName(name)
+    if type(name) ~= "string" then return false end
+    local n = name:lower()
+    return n:match("^specter%d*$") ~= nil
+end
+
+local function pickSpecterTarget()
+    local living = workspace:FindFirstChild("Living")
+    local my = select(1, getHRP())
+    if not living then return nil end
+    local best, bestD = nil, math.huge
+    for _, m in ipairs(living:GetChildren()) do
+        if not isPlayerChar(m) and isSpecterName(m.Name) then
+            local hum = m:FindFirstChildOfClass("Humanoid")
+            local root = m:FindFirstChild("HumanoidRootPart")
+            if hum and root and hum.Health > 0 and isMobOnGround(root) then
+                local d = my and (my.Position - root.Position).Magnitude or 0
+                if d < bestD then
+                    best, bestD = m, d
+                end
+            end
+        end
+    end
+    return best
+end
+
+task.spawn(function()
+    while not unloaded do
+        if not specterFarmOn then
+            task.wait(0.4)
+        else
+            local target = pickSpecterTarget()
+            if target then
+                local hrp = target:FindFirstChild("HumanoidRootPart")
+                local hum = target:FindFirstChildOfClass("Humanoid")
+                if hrp and hum then
+                    while specterFarmOn and hum.Parent and hum.Health > 0 do
+                        if not isMobOnGround(hrp) then break end
+                        approachMob(hrp)
+                        local my = select(1, getHRP())
+                        if my and hrp.Parent then
+                            pcall(function()
+                                local look = Vector3.new(hrp.Position.X, my.Position.Y, hrp.Position.Z)
+                                my.CFrame = faceAt(my, my.Position, look)
+                            end)
+                        end
+                        doAttack()
+                        task.wait(0.05)
+                    end
+                end
+            end
+            task.wait(0.15)
+        end
+    end
+end)
+
+SpecterGroup:AddToggle("SpecterFarm", {
+    Text = "Specter Farm (night)",
+    Default = false,
+    Callback = function(v)
+        specterFarmOn = v
+        notify("SpecterFarm", v and "ON" or "OFF")
+    end,
+})
+SpecterGroup:AddLabel("specter / specterN in Living")
+SpecterGroup:AddLabel("Same behind + fly speed as Auto Farm")
+SpecterGroup:AddLabel("Works at night event")
+
+
 -- Autoload AFTER all toggles exist (RaidFarm / MobFarm / etc.)
 ----------------------------------------------------------------
 task.defer(function()
