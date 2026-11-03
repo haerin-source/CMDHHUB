@@ -2,23 +2,47 @@
   CMDH Hub — Chainsaw Man: Devil's Heart
   Place-locked | config
 ]]
+
+-- never rely on warn/print being intact
+local function bootLog(...)
+    local msg = ""
+    local n = select("#", ...)
+    for i = 1, n do
+        if i > 1 then msg = msg .. " " end
+        msg = msg .. tostring(select(i, ...))
+    end
+    pcall(function() print("[CMDH] " .. msg) end)
+    pcall(function()
+        if type(warn) == "function" then warn("[CMDH] " .. msg) end
+    end)
+end
+
 local PLACE_ID = 11345435986
-if game.PlaceId ~= PLACE_ID then
-    warn("[CMDH] wrong game PlaceId=" .. tostring(game.PlaceId) .. " need " .. PLACE_ID)
+local placeOk, placeId = pcall(function() return game.PlaceId end)
+if not placeOk then
+    bootLog("cannot read PlaceId")
+    return
+end
+if placeId ~= PLACE_ID then
+    bootLog("wrong game PlaceId=" .. tostring(placeId) .. " need " .. tostring(PLACE_ID))
     return
 end
 
--- Single-instance: if already running, kill the live copy first then continue
+-- Single-instance: unload previous then continue
 do
-    local g = (type(getgenv) == "function" and getgenv()) or _G
+    local g = _G
+    pcall(function()
+        if type(getgenv) == "function" then g = getgenv() or _G end
+    end)
+    if type(g) ~= "table" then g = _G end
     if g.CMDH_DEVILHEART_RUNNING and type(g.DevilHeartUnload) == "function" then
-        warn("[CMDH] previous instance live — unloading it")
+        bootLog("previous instance live — unloading")
         pcall(g.DevilHeartUnload)
-        task.wait(0.35)
+        pcall(task.wait, 0.35)
     end
     g.CMDH_DEVILHEART_RUNNING = true
 end
-print("[CMDH] instance lock OK")
+bootLog("instance lock OK")
 
 -- Safe _G API stubs (prevents nil.SetEnabled / IsRedirectEnabled)
 do
@@ -3556,6 +3580,13 @@ if type(getgenv) == "function" and type(getgenv().DevilHeartUnload) == "function
 end
 
 local function fetchLib(path)
+    -- polyfill GetMouse if stripped (some executors)
+    pcall(function()
+        local lp = Players.LocalPlayer
+        if lp and type(lp.GetMouse) ~= "function" then
+            -- leave as-is; Linoria may error — we catch
+        end
+    end)
     local urls = {
         REPO .. path,
         REPO_FALLBACK .. path,
@@ -3564,13 +3595,21 @@ local function fetchLib(path)
         local okGet, body = pcall(function()
             return game:HttpGet(url)
         end)
-        if okGet and type(body) == "string" and #body > 100 and not body:find("^%s*<") then
-            local okLoad, fn = pcall(loadstring, body)
-            if okLoad and type(fn) == "function" then
+        if not okGet or type(body) ~= "string" or #body < 100 or body:find("^%s*<") then
+            bootLog("HttpGet fail", path, tostring(body):sub(1, 40))
+        else
+            local chunkName = "CMDH_" .. path:gsub("[%W]", "_")
+            local okLoad, fn = pcall(function()
+                return loadstring(body, chunkName)
+            end)
+            if not okLoad or type(fn) ~= "function" then
+                bootLog("loadstring fail", path, tostring(fn))
+            else
                 local okRun, lib = pcall(fn)
                 if okRun and lib ~= nil then
                     return lib
                 end
+                bootLog("run fail", path, tostring(lib))
             end
         end
     end
