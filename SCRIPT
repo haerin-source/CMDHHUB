@@ -4460,7 +4460,74 @@ end
 
 ----------------------------------------------------------------
 -- Mob Farm only (Mob farm path + fly)
--- No quest auto-claim
+-- Auto Yes on quest complete / repeat dialog
+local autoQuestYes = true
+task.spawn(function()
+    local function tryClickYes(root)
+        if not root then return false end
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("TextButton") or d:IsA("ImageButton") then
+                local t = ""
+                pcall(function() t = string.lower(tostring(d.Text or "")) end)
+                local n = string.lower(d.Name or "")
+                -- Yes / 예 / confirm style
+                if t == "yes" or t == "예" or t == "y" or n == "yes" or n:find("yes", 1, true) then
+                    pcall(function()
+                        firesignal(d.MouseButton1Click)
+                    end)
+                    pcall(function()
+                        if typeof(getconnections) == "function" then
+                            for _, c in ipairs(getconnections(d.MouseButton1Click)) do
+                                pcall(function() c:Fire() end)
+                            end
+                        end
+                    end)
+                    pcall(function()
+                        local vim = virtualInputManager or game:GetService("VirtualInputManager")
+                        local pos = d.AbsolutePosition + d.AbsoluteSize / 2
+                        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+                        task.wait(0.05)
+                        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+                    end)
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    while not unloaded do
+        if autoQuestYes then
+            local pg = Player:FindFirstChild("PlayerGui")
+            if pg then
+                -- scan top-level + common prompt frames
+                for _, child in ipairs(pg:GetChildren()) do
+                    if child:IsA("ScreenGui") and child.Enabled then
+                        -- look for quest complete text nearby
+                        local hasQuest = false
+                        for _, d in ipairs(child:GetDescendants()) do
+                            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                                local tx = ""
+                                pcall(function() tx = tostring(d.Text or "") end)
+                                if tx:find("퀘스트") or tx:find("미션") or tx:find("반복") or tx:lower():find("quest") then
+                                    hasQuest = true
+                                    break
+                                end
+                            end
+                        end
+                        if hasQuest then
+                            if tryClickYes(child) then
+                                notify("Quest", "Yes")
+                                task.wait(0.8)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.35)
+    end
+end)
+
 ----------------------------------------------------------------
 local PathfindingService = game:GetService("PathfindingService")
 local RunService = game:GetService("RunService")
@@ -4570,11 +4637,17 @@ local function cframeFlyTo(target, lookAt, allowY)
             hrp.CFrame = faceAt(hrp, pos, lookAt)
         end)
     until alpha >= 1 or (hrp.Position - target).Magnitude <= math.max(MOVE_SPEED * 0.05, 2)
-    if hrp and hrp.Parent then
+    -- if farm was turned OFF mid-path: stop in place, never finish teleport to target
+    local gateOn = farmToggle or raidFarmOn or specterFarmOn or allFiendFarmOn
+    if hrp and hrp.Parent and gateOn then
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
             local final = allowY and target or Vector3.new(target.X, target.Y, target.Z)
             hrp.CFrame = faceAt(hrp, final, lookAt)
+        end)
+    else
+        pcall(function()
+            if hrp then hrp.AssemblyLinearVelocity = Vector3.zero end
         end)
     end
 end
@@ -4721,10 +4794,41 @@ local function collectMobNames()
     return uniqueNames(names)
 end
 
+-- Extra attack keys (Farm tab multi). Always fires NormalAttack remote.
+local attackKeySet = { R = true } -- default R
+local ATTACK_KEY_OPTIONS = { "R", "1", "2", "3", "Z", "X", "C", "E" }
+local KEYCODE_MAP = {
+    R = Enum.KeyCode.R,
+    ["1"] = Enum.KeyCode.One,
+    ["2"] = Enum.KeyCode.Two,
+    ["3"] = Enum.KeyCode.Three,
+    Z = Enum.KeyCode.Z,
+    X = Enum.KeyCode.X,
+    C = Enum.KeyCode.C,
+    E = Enum.KeyCode.E,
+}
+
+local function pressKey(code)
+    pcall(function()
+        local vim = virtualInputManager or game:GetService("VirtualInputManager")
+        vim:SendKeyEvent(true, code, false, game)
+        task.wait(0.03)
+        vim:SendKeyEvent(false, code, false, game)
+    end)
+end
+
 local function doAttack()
     pcall(function()
         ReplicatedStorage.events.remote:FireServer("NormalAttack")
     end)
+    for name, on in pairs(attackKeySet) do
+        if on then
+            local code = KEYCODE_MAP[name]
+            if code then
+                pressKey(code)
+            end
+        end
+    end
 end
 
 local function farmOne(model)
@@ -4738,8 +4842,10 @@ local function farmOne(model)
         if not farmGate() then break end
         if not isMobOnGround(hrp) then break end
         approachMob(hrp)
+        -- OFF during approach → leave immediately, no face/attack/snap
+        if not farmGate() then break end
         local my = select(1, getHRP())
-        if my and hrp.Parent then
+        if my and hrp.Parent and farmGate() then
             pcall(function()
                 local look = hrp.Position
                 if not isZombieDevil(hrp) then
@@ -4748,6 +4854,7 @@ local function farmOne(model)
                 my.CFrame = faceAt(my, my.Position, look)
             end)
         end
+        if not farmGate() then break end
         doAttack()
         task.wait(0.05)
     end
@@ -4897,6 +5004,39 @@ MobFarmGroup:AddSlider("AtkBehind", {
         atkBehind = v
         huntModes = { "Behind" }
         pcall(function() huntLabel:SetText(huntText()) end)
+    end,
+})
+MobFarmGroup:AddDropdown("AttackKeys", {
+    Values = ATTACK_KEY_OPTIONS,
+    Default = { R = true },
+    Multi = true,
+    Text = "Attack keys (extra)",
+    Callback = function(v)
+        local set = {}
+        if type(v) == "table" then
+            for k, val in pairs(v) do
+                if type(k) == "string" and val then
+                    set[k] = true
+                elseif type(val) == "string" then
+                    set[val] = true
+                end
+            end
+        end
+        attackKeySet = set
+        local list = {}
+        for _, n in ipairs(ATTACK_KEY_OPTIONS) do
+            if set[n] then list[#list + 1] = n end
+        end
+        notify("AttackKeys", (#list > 0) and table.concat(list, "+") or "(remote only)")
+    end,
+})
+MobFarmGroup:AddLabel("R 1 2 3 Z X C E · + NormalAttack remote")
+MobFarmGroup:AddToggle("AutoQuestYes", {
+    Text = "Auto Yes (quest repeat)",
+    Default = true,
+    Callback = function(v)
+        autoQuestYes = v
+        notify("AutoQuestYes", v and "ON" or "OFF")
     end,
 })
 MobFarmGroup:AddLabel("Behind-only · nearest matching mob · no hover")
