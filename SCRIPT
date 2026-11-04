@@ -17,6 +17,11 @@ local function bootLog(...)
     end)
 end
 
+if type(table.clear) ~= "function" then
+    function table.clear(tab)
+        for k in pairs(tab) do tab[k] = nil end
+    end
+end
 local PLACE_ID = 11345435986
 local placeOk, placeId = pcall(function() return game.PlaceId end)
 if not placeOk then
@@ -3628,172 +3633,7 @@ if not Library then
     return
 end
 
-----------------------------------------------------------------
--- Env cloak + anti-kick (hide executor APIs from game callers)
-----------------------------------------------------------------
-pcall(function()
-    local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
-    local GEN = (getgenv and getgenv()) or _G
-    local HookFunction = GEN.hookfunction or hookfunction
-    local NewCClosure = GEN.newcclosure or newcclosure
-    local CheckCaller = GEN.checkcaller or checkcaller
-    local GetCallingScript = GEN.getcallingscript or getcallingscript
-    if type(HookFunction) ~= "function" or type(NewCClosure) ~= "function" then
-        warn("[CMDH] cloak skipped — hookfunction/newcclosure unavailable")
-        return
-    end
-    if type(getfenv) ~= "function" then
-        warn("[CMDH] cloak skipped — getfenv unavailable")
-        return
-    end
-    if GEN.CMDH_CLOAK_INSTALLED then
-        return
-    end
-
-    local MARKER = {
-        hookfunction = true, hookmetamethod = true, newcclosure = true, clonefunction = true,
-        checkcaller = true, getnamecallmethod = true, getcallingscript = true,
-        isexecutorclosure = true, isourclosure = true, iscclosure = true, islclosure = true,
-        getgc = true, getreg = true, getrawmetatable = true, setreadonly = true, isreadonly = true,
-        make_writeable = true, make_readonly = true, getconnections = true, getcallbackvalue = true,
-        getscriptclosure = true, getscriptbytecode = true, getsenv = true, getmenv = true,
-        getloadedmodules = true, getscripts = true, getrunningscripts = true,
-        getconstants = true, getconstant = true, setconstant = true,
-        getupvalues = true, getupvalue = true, setupvalue = true,
-        getprotos = true, getproto = true, setproto = true,
-        getgenv = true, getrenv = true, identifyexecutor = true, getexecutorname = true,
-        syn = true, KRNL_LOADED = true, fluxus = true, SENTINEL_LOADED = true,
-        readfile = true, writefile = true, appendfile = true, loadfile = true, listfiles = true,
-        makefolder = true, delfile = true, delfolder = true, isfile = true, isfolder = true,
-        setclipboard = true, toclipboard = true, request = true, http_request = true, httprequest = true,
-        WebSocket = true, gethui = true, protect_gui = true, unprotect_gui = true, cloneref = true,
-        fireclickdetector = true, fireproximityprompt = true, firetouchinterest = true, firesignal = true,
-        gethiddenproperty = true, sethiddenproperty = true, setscriptable = true,
-        Drawing = true, queue_on_teleport = true, queueonteleport = true,
-    }
-
-    local function callerIsGame()
-        if type(GetCallingScript) == "function" then
-            local ok, scr = pcall(GetCallingScript)
-            if ok and typeof(scr) == "Instance" then
-                return true, scr
-            end
-        end
-        if type(CheckCaller) == "function" then
-            local ok, own = pcall(CheckCaller)
-            if ok then
-                return not own, nil
-            end
-        end
-        return true, nil
-    end
-
-    local function copySanitized(src, selfRef)
-        if type(src) ~= "table" then
-            return src
-        end
-        local out = {}
-        local k, v = next(src, nil)
-        while k ~= nil do
-            local hide = (type(k) == "string" and MARKER[k] == true)
-            if not hide then
-                if k == "_G" and type(v) == "table" then
-                    out[k] = out
-                else
-                    out[k] = v
-                end
-            end
-            k, v = next(src, k)
-        end
-        if selfRef and src == selfRef then
-            out._G = out
-        end
-        return out
-    end
-
-    local OriginalGetgenv = rawget(GEN, "getgenv")
-    local OriginalGetrenv = rawget(GEN, "getrenv")
-
-    local OldRawget
-    OldRawget = HookFunction(rawget, NewCClosure(function(t, k)
-        local gameCaller = callerIsGame()
-        if gameCaller and type(k) == "string" and MARKER[k] then
-            return nil
-        end
-        return OldRawget(t, k)
-    end))
-
-    local OldGetfenv
-    OldGetfenv = HookFunction(getfenv, NewCClosure(function(target)
-        local query = target
-        if type(target) == "number" then
-            query = target + 1
-        elseif target == nil then
-            query = 2
-        end
-        local env = OldGetfenv(query)
-        local gameCaller = callerIsGame()
-        if gameCaller and type(env) == "table" then
-            return copySanitized(env, GEN)
-        end
-        return env
-    end))
-
-    if type(OriginalGetgenv) == "function" and OriginalGetgenv ~= getfenv then
-        local OldGetgenv
-        OldGetgenv = HookFunction(OriginalGetgenv, NewCClosure(function(...)
-            local env = OldGetgenv(...)
-            local gameCaller = callerIsGame()
-            if gameCaller and type(env) == "table" then
-                return copySanitized(env, GEN)
-            end
-            return env
-        end))
-    end
-
-    if type(OriginalGetrenv) == "function" and OriginalGetrenv ~= OriginalGetgenv and OriginalGetrenv ~= getfenv then
-        local OldGetrenv
-        OldGetrenv = HookFunction(OriginalGetrenv, NewCClosure(function(...)
-            local env = OldGetrenv(...)
-            local gameCaller = callerIsGame()
-            if gameCaller and type(env) == "table" then
-                return copySanitized(env, GEN)
-            end
-            return env
-        end))
-    end
-
-    local KickInstalled = false
-    do
-        local ok, kickMethod = pcall(function()
-            return LocalPlayer.Kick
-        end)
-        if ok and type(kickMethod) == "function" then
-            local OldKick
-            OldKick = HookFunction(kickMethod, NewCClosure(function(self, ...)
-                local gameCaller = callerIsGame()
-                if gameCaller and self == LocalPlayer then
-                    return nil
-                end
-                return OldKick(self, ...)
-            end))
-            KickInstalled = true
-        end
-    end
-
-    GEN.CMDH_CLOAK_INSTALLED = true
-    GEN.CMDH_CLOAK_STATUS = {
-        installed = true,
-        env_cloak = true,
-        rawget_cloak = true,
-        anti_kick = KickInstalled,
-    }
-    print("[CMDH] env cloak ON · anti_kick=" .. tostring(KickInstalled))
-end)
-
-
-
+-- (env cloak removed — broke game scripts)
 
 local function apCall(name, ...)
     local api = rawget(_G, "AutoParryAPI")
@@ -4585,15 +4425,19 @@ local function robustClick(btn)
     if not btn then return false end
     local ok = false
     pcall(function()
-        if typeof(getconnections) == "function" then
-            for _, sig in ipairs({ "Activated", "MouseButton1Click", "MouseButton1Down" }) do
-                local ev = btn[sig]
-                if ev then
-                    for _, c in ipairs(getconnections(ev)) do
+        if type(getconnections) ~= "function" then return end
+        for _, sig in ipairs({ "Activated", "MouseButton1Click", "MouseButton1Down" }) do
+            local ev = btn[sig]
+            if ev then
+                local cons = getconnections(ev)
+                if type(cons) == "table" then
+                    for _, c in ipairs(cons) do
                         pcall(function()
-                            if c.Fire then c:Fire()
-                            elseif c.fire then c:fire()
-                            elseif c.Function then c.Function()
+                            if c then
+                                if c.Fire then c:Fire()
+                                elseif c.fire then c:fire()
+                                elseif type(c.Function) == "function" then c.Function()
+                                end
                             end
                         end)
                         ok = true
@@ -5995,12 +5839,19 @@ local function isMansionTrash(name)
 end
 
 local function livingHum(m)
-    if not m or isPlayerChar(m) then return nil, nil end
+    if not m then return nil, nil end
+    local isPl = false
+    pcall(function() isPl = isPlayerChar(m) end)
+    if isPl then return nil, nil end
     local hum = m:FindFirstChildOfClass("Humanoid")
     local root = m:FindFirstChild("HumanoidRootPart")
-    if hum and root and hum.Health > 0 and isMobOnGround(root) then
-        return hum, root
+    if not hum or not root or hum.Health <= 0 then return nil, nil end
+    local grounded = true
+    if type(isMobOnGround) == "function" then
+        local okg, g = pcall(isMobOnGround, root)
+        if okg then grounded = g end
     end
+    if grounded then return hum, root end
     return nil, nil
 end
 
@@ -6033,16 +5884,16 @@ local function nearestNamed(names)
 end
 
 local function mansionGoSpot()
-    local hrp = select(1, getHRP())
-    if not hrp then return end
-    if (hrp.Position - MANSION_CF.Position).Magnitude > 10 then
-        pcall(function()
-            pathFlyTo(MANSION_CF.Position)
-        end)
-        pcall(function()
-            hrp.CFrame = MANSION_CF
-        end)
+    local ok, hrp = pcall(function() return select(1, getHRP()) end)
+    if not ok or not hrp then return end
+    local pos = MANSION_CF.Position
+    if (hrp.Position - pos).Magnitude <= 10 then return end
+    if type(pathFlyTo) == "function" then
+        pcall(pathFlyTo, pos)
     end
+    pcall(function()
+        hrp.CFrame = MANSION_CF
+    end)
 end
 
 local function mansionPickTarget()
@@ -6118,8 +5969,7 @@ task.spawn(function()
         else
             local target = raidPickTarget()
             if target then
-                local tname = target.Name
-                farmOne(target)
+                pcall(function() farmOne(target) end)
                 if raidMode == "Mansion" then
                     local hum = target:FindFirstChildOfClass("Humanoid")
                     if not hum or hum.Health <= 0 or not target.Parent then
@@ -6494,8 +6344,8 @@ task.defer(function()
 end)
 
 pcall(function()
-    if Library and Library.Notify then
-        Library:Notify({ Title = "CMDH Hub", Description = "Loaded", Time = 4 })
+    if Library and type(Library.Notify) == "function" then
+        Library:Notify({ Title = "CMDH Hub", Description = "Loaded", Time = 3 })
     end
 end)
 
