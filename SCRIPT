@@ -3,33 +3,20 @@
   Place-locked | config
 ]]
 
--- safe globals (some executors strip helpers)
-local _select = select
-local _unpack = unpack or table.unpack
-local _typeof = typeof or function(x)
-    local t = type(x)
-    if t == "userdata" or t == "table" then
-        local ok, r = pcall(function() return x.ClassName end)
-        if ok and r then return r end
-    end
-    return t
-end
-if type(table.clear) ~= "function" then
-    function table.clear(tab)
-        if type(tab) ~= "table" then return end
-        for k in pairs(tab) do tab[k] = nil end
-    end
-end
-
+-- never rely on warn/print being intact
 local function bootLog(...)
-    local args = { ... }
     local msg = ""
-    for i = 1, #args do
+    local n = select("#", ...)
+    for i = 1, n do
         if i > 1 then msg = msg .. " " end
-        msg = msg .. tostring(args[i])
+        msg = msg .. tostring(select(i, ...))
     end
     pcall(function() print("[CMDH] " .. msg) end)
+    pcall(function()
+        if type(warn) == "function" then warn("[CMDH] " .. msg) end
+    end)
 end
+
 local PLACE_ID = 11345435986
 local placeOk, placeId = pcall(function() return game.PlaceId end)
 if not placeOk then
@@ -3521,12 +3508,7 @@ local function makeTextLabel()
 end
 
 -- hub core
-do
-    local ok, err = pcall(makeTextLabel)
-    if not ok then
-        print("[CMDH] AutoParry init fail:", tostring(err))
-    end
-end
+makeTextLabel()
 
 
 -- Heart distance (workspace scan every 5s, text every 0.4s)
@@ -3614,8 +3596,6 @@ local function fetchLib(path)
     local urls = {
         REPO .. path,
         REPO_FALLBACK .. path,
-        "https://cdn.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/" .. path,
-        "https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/master/" .. path,
     }
     for _, url in ipairs(urls) do
         local okGet, body = pcall(function()
@@ -3642,36 +3622,178 @@ local function fetchLib(path)
     return nil
 end
 
-local Library = nil
-do
-    local ok, lib = pcall(fetchLib, "Library.lua")
-    if ok then Library = lib end
-end
-if type(Library) ~= "table" and type(Library) ~= "userdata" then
-    pcall(function() warn("[CMDH] Linoria Library failed to load") end)
-    pcall(function() print("[CMDH] STOP: Library nil — check HttpGet / allowlist") end)
-    pcall(function()
-        local sg = Instance.new("ScreenGui")
-        sg.Name = "CMDH_Fallback"
-        sg.ResetOnSpawn = false
-        pcall(function() sg.Parent = game:GetService("CoreGui") end)
-        if not sg.Parent and Player then
-            sg.Parent = Player:FindFirstChild("PlayerGui") or Player:WaitForChild("PlayerGui", 5)
-        end
-        local tl = Instance.new("TextLabel")
-        tl.Size = UDim2.new(0, 460, 0, 70)
-        tl.Position = UDim2.new(0.5, -230, 0.12, 0)
-        tl.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-        tl.TextColor3 = Color3.fromRGB(255, 90, 90)
-        tl.Font = Enum.Font.Code
-        tl.TextSize = 16
-        tl.Text = "CMDH: Library load FAILED\nHttpGet blocked? See F9"
-        tl.Parent = sg
-    end)
+local Library = fetchLib("Library.lua")
+if not Library then
+    warn("[CMDH] Linoria Library failed to load (HttpGet/loadstring nil)")
     return
 end
 
--- (env cloak removed — broke game scripts)
+----------------------------------------------------------------
+-- Env cloak + anti-kick (hide executor APIs from game callers)
+----------------------------------------------------------------
+pcall(function()
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local GEN = (getgenv and getgenv()) or _G
+    local HookFunction = GEN.hookfunction or hookfunction
+    local NewCClosure = GEN.newcclosure or newcclosure
+    local CheckCaller = GEN.checkcaller or checkcaller
+    local GetCallingScript = GEN.getcallingscript or getcallingscript
+    if type(HookFunction) ~= "function" or type(NewCClosure) ~= "function" then
+        warn("[CMDH] cloak skipped — hookfunction/newcclosure unavailable")
+        return
+    end
+    if type(getfenv) ~= "function" then
+        warn("[CMDH] cloak skipped — getfenv unavailable")
+        return
+    end
+    if GEN.CMDH_CLOAK_INSTALLED then
+        return
+    end
+
+    local MARKER = {
+        hookfunction = true, hookmetamethod = true, newcclosure = true, clonefunction = true,
+        checkcaller = true, getnamecallmethod = true, getcallingscript = true,
+        isexecutorclosure = true, isourclosure = true, iscclosure = true, islclosure = true,
+        getgc = true, getreg = true, getrawmetatable = true, setreadonly = true, isreadonly = true,
+        make_writeable = true, make_readonly = true, getconnections = true, getcallbackvalue = true,
+        getscriptclosure = true, getscriptbytecode = true, getsenv = true, getmenv = true,
+        getloadedmodules = true, getscripts = true, getrunningscripts = true,
+        getconstants = true, getconstant = true, setconstant = true,
+        getupvalues = true, getupvalue = true, setupvalue = true,
+        getprotos = true, getproto = true, setproto = true,
+        getgenv = true, getrenv = true, identifyexecutor = true, getexecutorname = true,
+        syn = true, KRNL_LOADED = true, fluxus = true, SENTINEL_LOADED = true,
+        readfile = true, writefile = true, appendfile = true, loadfile = true, listfiles = true,
+        makefolder = true, delfile = true, delfolder = true, isfile = true, isfolder = true,
+        setclipboard = true, toclipboard = true, request = true, http_request = true, httprequest = true,
+        WebSocket = true, gethui = true, protect_gui = true, unprotect_gui = true, cloneref = true,
+        fireclickdetector = true, fireproximityprompt = true, firetouchinterest = true, firesignal = true,
+        gethiddenproperty = true, sethiddenproperty = true, setscriptable = true,
+        Drawing = true, queue_on_teleport = true, queueonteleport = true,
+    }
+
+    local function callerIsGame()
+        if type(GetCallingScript) == "function" then
+            local ok, scr = pcall(GetCallingScript)
+            if ok and typeof(scr) == "Instance" then
+                return true, scr
+            end
+        end
+        if type(CheckCaller) == "function" then
+            local ok, own = pcall(CheckCaller)
+            if ok then
+                return not own, nil
+            end
+        end
+        return true, nil
+    end
+
+    local function copySanitized(src, selfRef)
+        if type(src) ~= "table" then
+            return src
+        end
+        local out = {}
+        local k, v = next(src, nil)
+        while k ~= nil do
+            local hide = (type(k) == "string" and MARKER[k] == true)
+            if not hide then
+                if k == "_G" and type(v) == "table" then
+                    out[k] = out
+                else
+                    out[k] = v
+                end
+            end
+            k, v = next(src, k)
+        end
+        if selfRef and src == selfRef then
+            out._G = out
+        end
+        return out
+    end
+
+    local OriginalGetgenv = rawget(GEN, "getgenv")
+    local OriginalGetrenv = rawget(GEN, "getrenv")
+
+    local OldRawget
+    OldRawget = HookFunction(rawget, NewCClosure(function(t, k)
+        local gameCaller = callerIsGame()
+        if gameCaller and type(k) == "string" and MARKER[k] then
+            return nil
+        end
+        return OldRawget(t, k)
+    end))
+
+    local OldGetfenv
+    OldGetfenv = HookFunction(getfenv, NewCClosure(function(target)
+        local query = target
+        if type(target) == "number" then
+            query = target + 1
+        elseif target == nil then
+            query = 2
+        end
+        local env = OldGetfenv(query)
+        local gameCaller = callerIsGame()
+        if gameCaller and type(env) == "table" then
+            return copySanitized(env, GEN)
+        end
+        return env
+    end))
+
+    if type(OriginalGetgenv) == "function" and OriginalGetgenv ~= getfenv then
+        local OldGetgenv
+        OldGetgenv = HookFunction(OriginalGetgenv, NewCClosure(function(...)
+            local env = OldGetgenv(...)
+            local gameCaller = callerIsGame()
+            if gameCaller and type(env) == "table" then
+                return copySanitized(env, GEN)
+            end
+            return env
+        end))
+    end
+
+    if type(OriginalGetrenv) == "function" and OriginalGetrenv ~= OriginalGetgenv and OriginalGetrenv ~= getfenv then
+        local OldGetrenv
+        OldGetrenv = HookFunction(OriginalGetrenv, NewCClosure(function(...)
+            local env = OldGetrenv(...)
+            local gameCaller = callerIsGame()
+            if gameCaller and type(env) == "table" then
+                return copySanitized(env, GEN)
+            end
+            return env
+        end))
+    end
+
+    local KickInstalled = false
+    do
+        local ok, kickMethod = pcall(function()
+            return LocalPlayer.Kick
+        end)
+        if ok and type(kickMethod) == "function" then
+            local OldKick
+            OldKick = HookFunction(kickMethod, NewCClosure(function(self, ...)
+                local gameCaller = callerIsGame()
+                if gameCaller and self == LocalPlayer then
+                    return nil
+                end
+                return OldKick(self, ...)
+            end))
+            KickInstalled = true
+        end
+    end
+
+    GEN.CMDH_CLOAK_INSTALLED = true
+    GEN.CMDH_CLOAK_STATUS = {
+        installed = true,
+        env_cloak = true,
+        rawget_cloak = true,
+        anti_kick = KickInstalled,
+    }
+    print("[CMDH] env cloak ON · anti_kick=" .. tostring(KickInstalled))
+end)
+
+
+
 
 local function apCall(name, ...)
     local api = rawget(_G, "AutoParryAPI")
@@ -3690,59 +3812,17 @@ do
         return Library:CreateWindow({
             Title = "CMDH Hub | Devil's Heart",
             Center = true,
-            AutoShow = true,
+            AutoShow = false,
             TabPadding = 8,
             MenuFadeTime = 0.2,
         })
     end)
     if not ok or not win then
         warn("[CMDH] CreateWindow failed: " .. tostring(win))
-        -- fallback banner so user knows script ran
-        pcall(function()
-            local sg = Instance.new("ScreenGui")
-            sg.Name = "CMDH_Fallback"
-            sg.ResetOnSpawn = false
-            pcall(function() sg.Parent = game:GetService("CoreGui") end)
-            if not sg.Parent then
-                sg.Parent = Player:WaitForChild("PlayerGui")
-            end
-            local tl = Instance.new("TextLabel")
-            tl.Size = UDim2.new(0, 420, 0, 60)
-            tl.Position = UDim2.new(0.5, -210, 0.1, 0)
-            tl.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-            tl.TextColor3 = Color3.fromRGB(255, 80, 80)
-            tl.Text = "CMDH: Linoria CreateWindow failed — check F9"
-            tl.Parent = sg
-        end)
         return
     end
     Window = win
-    pcall(function() Library.ToggleKeybind = Enum.KeyCode.RightShift end)
-    local function forceShow()
-        pcall(function()
-            if Window.SetVisible then Window:SetVisible(true) end
-        end)
-        pcall(function()
-            if Library.Toggled ~= nil then Library.Toggled = true end
-        end)
-        pcall(function()
-            if type(Library.Toggle) == "function" then
-                -- only toggle if currently hidden
-                if Library.Toggled == false then Library:Toggle() end
-            end
-        end)
-        pcall(function()
-            if Library.UnbindKey and Library.BindKey then
-                -- leave keybind
-            end
-        end)
-    end
-    forceShow()
-    task.defer(forceShow)
-    task.delay(0.5, forceShow)
-    task.delay(1.5, forceShow)
-    getgenv().CMDH_ForceShow = forceShow
-    print("[CMDH] Window created — RightShift toggles UI")
+    pcall(function() Window:SetVisible(false) end)
 end
 
 local Tabs = {
@@ -3777,7 +3857,7 @@ local UI = {
     Unload = Tabs.Settings:AddLeftGroupbox("Script"),
     Silent = Tabs.Settings:AddRightGroupbox("Display"),
 }
-Toggle("ShowUI", {
+UI.Silent:AddToggle("ShowUI", {
     Text = "Show UI",
     Default = false,
     Callback = function(v)
@@ -3785,14 +3865,14 @@ Toggle("ShowUI", {
         pcall(function() Window:SetVisible(uiVisible) end)
     end,
 })
-Toggle("NotifyToggle", {
+UI.Silent:AddToggle("NotifyToggle", {
     Text = "Notifications",
     Default = true,
     Callback = function(v)
         notifyEnabled = v and true or false
     end,
 })
-Label("RightShift also toggles UI")
+UI.Silent:AddLabel("RightShift also toggles UI")
 UI.PlayerMove = Tabs.Player:AddLeftGroupbox("Movement")
 UI.Specter = Tabs.Farm:AddRightGroupbox("Specter")
 
@@ -3809,21 +3889,17 @@ local COLOR_NPC = Color3.fromRGB(255, 255, 255)
 local COLOR_MUT = Color3.fromRGB(255, 223, 100)
 
 local notifyEnabled = true
-local NOTIFY_SILENT = true
-local function notify(title, text)
-    if NOTIFY_SILENT then return end
-    pcall(function()
-        Library:Notify({ Title = tostring(title), Description = tostring(text or ""), Time = 2 })
-    end)
+local function notify(t, m)
+    print("[" .. t .. "] " .. tostring(m))
+    if not notifyEnabled then return end
+    pcall(function() Library:Notify(t .. " — " .. tostring(m), 3) end)
 end
-
 
 ----------------------------------------------------------------
 -- Combat (hub APIs)
 ----------------------------------------------------------------
-Toggle("AutoParry", {
+UI.Combat:AddToggle("AutoParry", {
     Text = "Auto Parry",
-    Tooltip = "Auto block/parry on enemy attack animations",
     Default = true,
     Callback = function(v)
         apCall("SetAutoParry", v)
@@ -3831,7 +3907,7 @@ Toggle("AutoParry", {
     end,
 })
 
-Toggle("AutoDash", {
+UI.Combat:AddToggle("AutoDash", {
     Text = "Auto Dash",
     Default = false,
     Callback = function(v)
@@ -3839,7 +3915,9 @@ Toggle("AutoDash", {
     end,
 })
 
-Toggle("AutoParryKick", {
+UI.Combat:AddLabel("ParryKick: needs enemy attack windup in range")
+UI.Combat:AddLabel("Does not aim — turn OFF Mob Aimbot if camera locks")
+UI.Combat:AddToggle("AutoParryKick", {
     Text = "Auto Parry Kick",
     Default = false,
     Callback = function(v)
@@ -3850,7 +3928,7 @@ Toggle("AutoParryKick", {
     end,
 })
 
-Slider("ParryKickDelay", {
+UI.Combat:AddSlider("ParryKickDelay", {
     Text = "Parry Kick Delay",
     Default = 0.15, Min = 0, Max = 0.25, Rounding = 2,
     Callback = function(v)
@@ -3858,7 +3936,7 @@ Slider("ParryKickDelay", {
     end,
 })
 
-Toggle("AutoAttack", {
+UI.Combat:AddToggle("AutoAttack", {
     Text = "Auto Attack Reactions",
     Default = true,
     Callback = function(v)
@@ -3870,7 +3948,7 @@ Toggle("AutoAttack", {
 ----------------------------------------------------------------
 -- Heart status (hub tracker)
 ----------------------------------------------------------------
-local heartLabel = Label("Devil Heart: scanning...")
+local heartLabel = UI.Heart:AddLabel("Devil Heart: scanning...")
 
 task.spawn(function()
     while not unloaded do
@@ -3919,7 +3997,7 @@ local function wipePlayerESP()
     end
 end
 
-Toggle("PlayerESP", {
+UI.PlayerESP:AddToggle("PlayerESP", {
     Text = "Player ESP",
     Default = false,
     Callback = function(v)
@@ -4030,7 +4108,7 @@ task.spawn(function()
     end
 end)
 
-Toggle("FiendESP", {
+UI.FiendESP:AddToggle("FiendESP", {
     Text = "Fiend ESP",
     Default = false,
     Callback = function(v)
@@ -4048,9 +4126,9 @@ Toggle("FiendESP", {
         end)
     end,
 })
-Label("White normal / Yellow mutation")
+UI.FiendESP:AddLabel("White normal / Yellow mutation")
 
-Toggle("DevilESP", {
+UI.DevilESP:AddToggle("DevilESP", {
     Text = "Devil ESP",
     Default = false,
     Callback = function(v)
@@ -4068,7 +4146,7 @@ Toggle("DevilESP", {
         end)
     end,
 })
-Label("White normal / Yellow mutation")
+UI.DevilESP:AddLabel("White normal / Yellow mutation")
 
 -- keep hub combined NPC ESP off (we use split)
 if _G.NPCEspAPI and _G.NPCEspAPI.SetEnabled then
@@ -4212,14 +4290,14 @@ local function serverHop(mode)
     end)
 end
 
-Slider("HopMin", { Text = "Min Players", Default = 1, Min = 0, Max = 30, Rounding = 0, Callback = function(v) hopMinPlayers = v end })
-Slider("HopMax", { Text = "Max Players", Default = 20, Min = 1, Max = 50, Rounding = 0, Callback = function(v) hopMaxPlayers = v end })
-Button({ Text = "Server Hop (Random)", Func = function() serverHop("random") end })
-Button({ Text = "Server Hop (Lowest Players)", Func = function() serverHop("lowest") end })
-Button({ Text = "Server Hop (Lowest Ping)", Func = function() serverHop("ping") end })
-Label("Skips current JobId")
-Label("Random: never re-visit until full cycle reset")
-Toggle("AutoHop", {
+UI.Hop:AddSlider("HopMin", { Text = "Min Players", Default = 1, Min = 0, Max = 30, Rounding = 0, Callback = function(v) hopMinPlayers = v end })
+UI.Hop:AddSlider("HopMax", { Text = "Max Players", Default = 20, Min = 1, Max = 50, Rounding = 0, Callback = function(v) hopMaxPlayers = v end })
+UI.Hop:AddButton({ Text = "Server Hop (Random)", Func = function() serverHop("random") end })
+UI.Hop:AddButton({ Text = "Server Hop (Lowest Players)", Func = function() serverHop("lowest") end })
+UI.Hop:AddButton({ Text = "Server Hop (Lowest Ping)", Func = function() serverHop("ping") end })
+UI.Hop:AddLabel("Skips current JobId")
+UI.Hop:AddLabel("Random: never re-visit until full cycle reset")
+UI.Hop:AddToggle("AutoHop", {
     Text = "Auto Hop if No Heart",
     Default = false,
     Callback = function(v)
@@ -4251,28 +4329,28 @@ local function copyCode(c)
     if setclipboard then setclipboard(c) elseif toclipboard then toclipboard(c) end
     notify("Codes", c)
 end
-for _, c in ipairs(YEN) do Button({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(EXP) do Button({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(BULLET) do Button({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(AURA) do Button({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(CONTRACT) do Button({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(SKILL) do Button({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(HYBRID) do Button({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(FIEND) do Button({ Text = c, Func = function() copyCode(c) end }) end
-Label("Some codes may no longer redeem.")
-Label("Some codes may no longer redeem.")
-Label("Some codes may no longer redeem.")
-Label("Some codes may no longer redeem.")
-Label("Some codes may no longer redeem.")
-Label("Some codes may no longer redeem.")
-Label("Some codes may no longer redeem.")
-Label("Some codes may no longer redeem.")
+for _, c in ipairs(YEN) do UI.YenCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(EXP) do UI.ExpCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(BULLET) do UI.BulletCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(AURA) do UI.AuraCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(CONTRACT) do UI.ContractCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(SKILL) do UI.SkillCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(HYBRID) do UI.HybridCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(FIEND) do UI.FiendCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
+UI.YenCode:AddLabel("Some codes may no longer redeem.")
+UI.ExpCode:AddLabel("Some codes may no longer redeem.")
+UI.BulletCode:AddLabel("Some codes may no longer redeem.")
+UI.AuraCode:AddLabel("Some codes may no longer redeem.")
+UI.ContractCode:AddLabel("Some codes may no longer redeem.")
+UI.SkillCode:AddLabel("Some codes may no longer redeem.")
+UI.HybridCode:AddLabel("Some codes may no longer redeem.")
+UI.FiendCode:AddLabel("Some codes may no longer redeem.")
 
 ----------------------------------------------------------------
 -- AFK
 ----------------------------------------------------------------
 local afkConn
-Toggle("AntiAFK", {
+UI.Afk:AddToggle("AntiAFK", {
     Text = "Anti-AFK",
     Default = false,
     Callback = function(v)
@@ -4362,14 +4440,15 @@ local function setNoclip(on)
     end)
 end
 
-Toggle("Noclip", {
+UI.PlayerMove:AddToggle("Noclip", {
     Text = "Noclip",
-    Tooltip = "Pass through parts (CanCollide off)",
     Default = false,
     Callback = function(v)
         setNoclip(v)
     end,
 })
+UI.PlayerMove:AddLabel("CanCollide off + micro jitter")
+
 local flyPlatformOn = false
 local flyPlatformPart = nil
 local flyPlatformConn = nil
@@ -4415,14 +4494,16 @@ local function setFlyPlatform(on)
     end)
 end
 
-Toggle("FlyPlatform", {
+UI.PlayerMove:AddToggle("FlyPlatform", {
     Text = "Fly Platform",
     Default = false,
     Callback = function(v)
         setFlyPlatform(v)
     end,
 })
-Button({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
+UI.PlayerMove:AddLabel("Anchored pad under feet")
+
+UI.Unload:AddButton({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
 Library:OnUnload(function() unloaded = true end)
 
 
@@ -4457,7 +4538,6 @@ end
 -- Auto Yes on quest complete / Ready Up / Enter — signal fire only (no mouse)
 local autoQuestYes = true
 local autoReadyUp = true
-local autoVoteDiff = false
 
 local function fireButton(btn)
     if not btn then return false end
@@ -4472,10 +4552,7 @@ local function fireButton(btn)
         if typeof(getconnections) == "function" then
             for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
                 pcall(function()
-                    if c.Fire then c:Fire()
-                    elseif c.fire then c:fire()
-                    elseif c.Function then c.Function()
-                    end
+                    if c.Fire then c:Fire() elseif c.Function then c.Function() end
                 end)
                 ok = true
             end
@@ -4484,115 +4561,7 @@ local function fireButton(btn)
     pcall(function()
         if btn.Activate then btn:Activate() ok = true end
     end)
-    -- virtual mouse (game offset +36 often needed)
-    if not ok then
-        pcall(function()
-            local vim = game:GetService("VirtualInputManager")
-            local pos = btn.AbsolutePosition
-            local size = btn.AbsoluteSize
-            local x = pos.X + size.X / 2
-            local y = pos.Y + size.Y / 2 + 36
-            vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
-            task.wait(0.05)
-            vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
-            ok = true
-        end)
-    end
     return ok
-end
-
-local function robustClick(btn)
-    if not btn then return false end
-    local ok = false
-    pcall(function()
-        if type(getconnections) ~= "function" then return end
-        for _, sig in ipairs({ "Activated", "MouseButton1Click", "MouseButton1Down" }) do
-            local ev = btn[sig]
-            if ev then
-                local cons = getconnections(ev)
-                if type(cons) == "table" then
-                    for _, c in ipairs(cons) do
-                        pcall(function()
-                            if c then
-                                if c.Fire then c:Fire()
-                                elseif c.fire then c:fire()
-                                elseif type(c.Function) == "function" then c.Function()
-                                end
-                            end
-                        end)
-                        ok = true
-                    end
-                end
-            end
-        end
-    end)
-    pcall(function()
-        local vim = game:GetService("VirtualInputManager")
-        local pos = btn.AbsolutePosition
-        local size = btn.AbsoluteSize
-        local x = pos.X + size.X / 2
-        local y = pos.Y + size.Y / 2 + 36
-        vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
-        task.wait(0.05)
-        vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
-        ok = true
-    end)
-    return ok
-end
-
--- Ready: RaidMenu.End.Ready.text (wave end)
-local function doRaidReadyUp()
-    local pg = Player:FindFirstChild("PlayerGui")
-    if not pg then return false end
-    local targetButton = nil
-    local raidMenu = pg:FindFirstChild("RaidMenu")
-    local endFolder = raidMenu and raidMenu:FindFirstChild("End")
-    local readyFolder = endFolder and endFolder:FindFirstChild("Ready")
-    targetButton = readyFolder and readyFolder:FindFirstChild("text")
-    if not targetButton then
-        local rm = pg:FindFirstChild("RaidMenuEnd", true)
-        local ready = rm and rm:FindFirstChild("Ready", true)
-        targetButton = ready and ready:FindFirstChild("text")
-    end
-    if targetButton and targetButton:IsA("TextButton") then
-        return robustClick(targetButton)
-    end
-    return false
-end
-
--- Difficulty + Vote with wait for UI (max ~5s)
-local function voteRaidDifficulty(diffName)
-    diffName = diffName or raidDifficulty or "Normal"
-    if diffName ~= "Hard" and diffName ~= "Insane" then diffName = "Normal" end
-    local pg = Player:FindFirstChild("PlayerGui")
-    if not pg then return false end
-    local targetClean = string.lower(diffName)
-    local diffFolder, voteBtn = nil, nil
-    for _ = 1, 50 do
-        diffFolder, voteBtn = nil, nil
-        for _, v in ipairs(pg:GetDescendants()) do
-            if v:IsA("TextButton") and v.Name == "Button" and v.Parent
-                and string.lower(tostring(v.Parent.Name)) == targetClean then
-                diffFolder = v.Parent
-            end
-            if v:IsA("TextButton") and v.Name == "text" and v.Parent
-                and v.Parent.Name == "Unlock" then
-                local tx = string.lower(tostring(v.Text or ""))
-                if string.find(tx, "vote", 1, true) then
-                    voteBtn = v
-                end
-            end
-        end
-        if diffFolder and voteBtn and voteBtn.AbsoluteSize.X > 0 then break end
-        task.wait(0.1)
-    end
-    if not (diffFolder and diffFolder:FindFirstChild("Button") and voteBtn) then
-        return false
-    end
-    robustClick(diffFolder.Button)
-    task.wait(0.3)
-    robustClick(voteBtn)
-    return true
 end
 
 local function buttonMatches(btn, words)
@@ -4678,14 +4647,11 @@ task.spawn(function()
                 task.wait(0.6)
             end
         end
-        if autoReadyUp and raidMode ~= "Makima" then
-            if doRaidReadyUp() then
+        if autoReadyUp then
+            local hit = scanAndClick({ "Ready Up", "ReadyUp", "ready up" }, nil)
+            if hit then
+                notify("Raid", "Ready Up")
                 task.wait(0.8)
-            end
-        end
-        if autoVoteDiff and raidMode ~= "Makima" then
-            if voteRaidDifficulty(raidDifficulty) then
-                task.wait(1.2)
             end
         end
         task.wait(0.25)
@@ -4716,7 +4682,7 @@ local specterFarmOn = false
 local allFiendFarmOn = false
 local raidHealing = false
 local selectedMobs = {} -- priority ordered: [1]=highest
-local MOVE_SPEED = 40
+local MOVE_SPEED = 40 -- capped (Guillburt / ban risk above ~50)
 local atkBehind = 4
 local atkAbove = 3
 local atkBelow = 3
@@ -5088,7 +5054,7 @@ local function priorityText()
     return "Priority: " .. table.concat(parts, " > ")
 end
 
-local prioLabel = Label(priorityText())
+local prioLabel = UI.MobFarm:AddLabel(priorityText())
 
 local function toggleMobPriority(name)
     if not name or name == "(no mobs yet)" then return end
@@ -5105,7 +5071,7 @@ local function toggleMobPriority(name)
     notify("Farm", "P" .. #selectedMobs .. " " .. name)
 end
 
-Toggle("MobFarm", {
+UI.MobFarm:AddToggle("MobFarm", {
     Text = "Auto-farm",
     Default = false,
     Callback = function(v)
@@ -5115,7 +5081,7 @@ Toggle("MobFarm", {
 })
 
 -- Multi dropdown: selecting toggles priority membership (Linoria multi)
-local mobDropdown = Dropdown("SelectMobs", {
+local mobDropdown = UI.MobFarm:AddDropdown("SelectMobs", {
     Values = mobNames,
     Default = {},
     Multi = true,
@@ -5151,26 +5117,26 @@ local mobDropdown = Dropdown("SelectMobs", {
     end,
 })
 
-Slider("FarmFlySpeed", {
-    Text = "Fly Speed",
+UI.MobFarm:AddSlider("FarmFlySpeed", {
+    Text = "Fly Speed (max 50)",
     Default = 40,
-    Min = 40,
-    Max = 40,
+    Min = 10,
+    Max = 50,
     Rounding = 0,
-    Tooltip = "Locked at 40",
-    Callback = function() MOVE_SPEED = 40
+    Callback = function(v)
+        MOVE_SPEED = math.clamp(v, 10, 50)
     end,
 })
 local function huntText()
     return "Hunt: Behind only (" .. tostring(atkBehind) .. " studs)"
 end
 
-local huntLabel = Label(huntText())
+local huntLabel = UI.MobFarm:AddLabel(huntText())
 
 -- Behind-only attack (Above/Below removed — hits from behind)
 huntModes = { "Behind" }
 
-Slider("AtkBehind", {
+UI.MobFarm:AddSlider("AtkBehind", {
     Text = "Behind Studs",
     Default = 4,
     Min = 0,
@@ -5182,7 +5148,7 @@ Slider("AtkBehind", {
         pcall(function() huntLabel:SetText(huntText()) end)
     end,
 })
-Dropdown("AttackKeys", {
+UI.MobFarm:AddDropdown("AttackKeys", {
     Values = ATTACK_KEY_OPTIONS,
     Default = { R = true },
     Multi = true,
@@ -5206,8 +5172,8 @@ Dropdown("AttackKeys", {
         notify("AttackKeys", (#list > 0) and table.concat(list, "+") or "(remote only)")
     end,
 })
-Label("R 1 2 3 Z X C E · + NormalAttack remote")
-Toggle("AutoQuestYes", {
+UI.MobFarm:AddLabel("R 1 2 3 Z X C E · + NormalAttack remote")
+UI.MobFarm:AddToggle("AutoQuestYes", {
     Text = "Auto Yes (quest repeat)",
     Default = true,
     Callback = function(v)
@@ -5266,17 +5232,16 @@ local function watchDeath()
 end
 watchDeath()
 
-Toggle("DeathReequip", {
+UI.MobFarm:AddToggle("DeathReequip", {
     Text = "Death re-equip",
-    Tooltip = "On death press hotbar key 0-9 to re-equip",
     Default = false,
     Callback = function(v)
         deathReequipOn = v
         notify("DeathReequip", v and "ON" or "OFF")
     end,
 })
-Dropdown("DeathReequipKey", {
-    Values = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
+UI.MobFarm:AddDropdown("DeathReequipKey", {
+    Values = { "1", "2", "3", "4", "R", "E", "Z", "X", "C", "F", "Q" },
     Default = 1,
     Multi = false,
     Text = "Re-equip key",
@@ -5291,8 +5256,9 @@ Dropdown("DeathReequipKey", {
         end
     end,
 })
+UI.MobFarm:AddLabel("Behind-only · nearest matching mob · no hover")
 
-Button({
+UI.MobFarm:AddButton({
     Text = "Clear priority list",
     Func = function()
         selectedMobs = {}
@@ -5301,7 +5267,7 @@ Button({
     end,
 })
 
-Button({
+UI.MobFarm:AddButton({
     Text = "Refresh mob list",
     Func = function()
         local names = collectMobNames()
@@ -5313,6 +5279,9 @@ Button({
     end,
 })
 
+UI.MobFarm:AddLabel("1st selected = highest priority")
+UI.MobFarm:AddLabel("Select again to remove (list shifts up)")
+UI.MobFarm:AddLabel("Sky hover → wait → hit offset (no wall path)")
 
 -- live refresh when new living models spawn
 local livingFolder = workspace:FindFirstChild("Living")
@@ -5370,9 +5339,8 @@ local function stunScanAll()
     end)
 end
 
-Toggle("StunMon", {
+UI.MobFarm:AddToggle("StunMon", {
     Text = "Stun Mon",
-    Tooltip = "When mob HP below %, set HP to 0 (client)",
     Default = false,
     Callback = function(v)
         stunMon = v
@@ -5384,7 +5352,7 @@ Toggle("StunMon", {
         end
     end,
 })
-Slider("StunThreshold", {
+UI.MobFarm:AddSlider("StunThreshold", {
     Text = "Stun HP % (below → kill)",
     Default = 99,
     Min = 1,
@@ -5395,6 +5363,7 @@ Slider("StunThreshold", {
         notify("Stun", "threshold " .. v .. "%")
     end,
 })
+UI.MobFarm:AddLabel("Take any damage under % → HP 0")
 
 
 
@@ -5497,9 +5466,8 @@ local function startMobAim()
     end)
 end
 
-Toggle("MobAimbot", {
+UI.MobFarm:AddToggle("MobAimbot", {
     Text = "Mob Aimbot",
-    Tooltip = "Camera aims nearest living mob",
     Default = false,
     Callback = function(v)
         if v then
@@ -5511,6 +5479,8 @@ Toggle("MobAimbot", {
         end
     end,
 })
+UI.MobFarm:AddLabel("Green outline = current target")
+UI.MobFarm:AddLabel("Skips dead NPCs (live refresh)")
 
 -- unload cleanup
 do
@@ -5556,196 +5526,7 @@ do
     end
 end
 
-
 ----------------------------------------------------------------
--- Auto Dance (DanceMachine A/S/K/L)
-----------------------------------------------------------------
-do
-    local RunService = game:GetService("RunService")
-    local Players = game:GetService("Players")
-    local mapKeys = { Left = "A", Down = "S", Up = "K", Right = "L" }
-    local refY = {}
-    local danceOn = false
-    local danceAcc = 0.85 -- 0..1 hit rate
-    local arrowsFolder = nil
-    local childConn = nil
-    local pollConn = nil
-    local tracked = {}
-    local lp = Players.LocalPlayer
-
-    local function clearTrack(frame)
-        tracked[frame] = nil
-    end
-
-    local function armNote(frame)
-        if not danceOn or not frame or not frame:IsA("Frame") then return end
-        if not mapKeys[frame.Name] then return end
-        if tracked[frame] then return end
-        -- intentional miss
-        if math.random() > danceAcc then
-            tracked[frame] = "miss"
-            return
-        end
-        tracked[frame] = true
-    end
-
-    local function noteHit(frame)
-        armNote(frame)
-    end
-
-    local function dancePoll()
-        if not danceOn then return end
-        for frame, st in pairs(tracked) do
-            if st == true and frame.Parent then
-                local y = frame.AbsolutePosition.Y
-                local target = refY[frame.Name]
-                if y and target and y >= target - 12 and y <= target + 12 then
-                    local key = Enum.KeyCode[mapKeys[frame.Name]]
-                    pcall(function()
-                        local vim = game:GetService("VirtualInputManager")
-                        vim:SendKeyEvent(true, key, false, game)
-                        task.wait(0.03)
-                        vim:SendKeyEvent(false, key, false, game)
-                    end)
-                    pcall(function() frame:Destroy() end)
-                    clearTrack(frame)
-                end
-            elseif st == "miss" or not frame.Parent then
-                clearTrack(frame)
-            end
-        end
-    end
-
-    local function setupDanceMachine()
-        if not danceOn or not lp then return end
-        local pg = lp:FindFirstChild("PlayerGui")
-        if not pg then return end
-        local dm = pg:FindFirstChild("DanceMachine")
-        if not dm then return end
-        local gameFrame = dm:FindFirstChild("Game")
-        if not gameFrame then return end
-        arrowsFolder = gameFrame:FindFirstChild("Arrows")
-        if not arrowsFolder then return end
-        table.clear(refY)
-        for _, ch in ipairs(arrowsFolder:GetChildren()) do
-            if ch:IsA("ImageLabel") and mapKeys[ch.Name] then
-                refY[ch.Name] = ch.AbsolutePosition.Y
-            end
-        end
-        for k, _ in pairs(mapKeys) do
-            if not refY[k] then refY[k] = 0 end
-        end
-        if childConn then pcall(function() childConn:Disconnect() end) end
-        childConn = arrowsFolder.ChildAdded:Connect(function(ch)
-            task.defer(function() noteHit(ch) end)
-        end)
-        for _, ch in ipairs(arrowsFolder:GetChildren()) do
-            noteHit(ch)
-        end
-        if pollConn then pcall(function() pollConn:Disconnect() end) end
-        pollConn = RunService.Heartbeat:Connect(function()
-            if danceOn then dancePoll() end
-        end)
-    end
-
-    local function setDance(on)
-        danceOn = not not on
-        if not danceOn then
-            if childConn then pcall(function() childConn:Disconnect() end) childConn = nil end
-            if pollConn then pcall(function() pollConn:Disconnect() end) pollConn = nil end
-            table.clear(tracked)
-            print("[CMDH] AutoDance OFF")
-        else
-            setupDanceMachine()
-            print("[CMDH] AutoDance ON")
-        end
-    end
-
-    if lp then
-        local pg = lp:WaitForChild("PlayerGui", 10)
-        if pg then
-            pg.ChildAdded:Connect(function(ch)
-                if ch.Name == "DanceMachine" and danceOn then
-                    task.wait(0.2)
-                    setupDanceMachine()
-                end
-            end)
-        end
-    end
-
-    _G.DanceAPI = _G.DanceAPI or {}
-    _G.DanceAPI.SetAutoDanceEnabled = setDance
-    _G.DanceAPI.IsAutoDanceEnabled = function() return danceOn end
-    setDance(false)
-
-    -- UI: Main combat area if present, else Settings
-    local danceBox = nil
-    pcall(function()
-        if Tabs and Tabs.Main then
-            danceBox = Tabs.Main:AddRightGroupbox("Dance")
-        end
-    end)
-    if not danceBox then
-        pcall(function()
-            danceBox = Tabs.Settings:AddRightGroupbox("Dance")
-        end)
-    end
-    if danceBox then
-        danceBox:AddToggle("AutoDance", {
-            Text = "Auto Dance Machine",
-            Default = false,
-            Tooltip = "DanceMachine notes A/S/K/L. Lower accuracy = intentional misses.",
-            Callback = function(v)
-                setDance(v)
-            end,
-        })
-        danceBox:AddSlider("DanceAcc", {
-            Text = "Hit rate %",
-            Default = 85,
-            Min = 50,
-            Max = 100,
-            Rounding = 0,
-            Tooltip = "80 = hit ~80% of notes, rest intentionally missed",
-            Callback = function(v)
-                danceAcc = math.clamp(v / 100, 0.05, 1)
-            end,
-        })
-    end
-end
-
-
-----------------------------------------------------------------
-
-pcall(function()
-    local kb = Tabs.Settings:AddLeftGroupbox("Menu")
-    kb:AddLabel("UI Toggle Key")
-    pcall(function()
-        Library.KeybindFrame = Library.KeybindFrame
-    end)
-    -- Linoria global menu key
-    if Library.SetKeybindFrameVisible then
-        -- user sets in Keybinds tab if present
-    end
-    kb:AddDropdown("MenuToggleKey", {
-        Values = { "RightShift", "LeftControl", "RightControl", "LeftAlt", "RightAlt", "P", "LeftBracket", "RightBracket" },
-        Default = 1,
-        Multi = false,
-        Text = "UI Toggle Key",
-        Tooltip = "Show/hide CMDH menu",
-        Callback = function(v)
-            local name = v
-            if type(v) == "table" then
-                for k, on in pairs(v) do if on then name = type(k)=="string" and k or on break end end
-            end
-            local key = Enum.KeyCode[tostring(name)]
-            if key then
-                pcall(function() Library.ToggleKeybind = key end)
-            end
-        end,
-    })
-end)
-
-
 -- Keybinds for all toggles (Linoria KeyPicker, set in UI)
 ----------------------------------------------------------------
 task.defer(function()
@@ -5777,9 +5558,6 @@ task.defer(function()
         "StunMon",
         "MobAimbot",
         "RaidFarm",
-        "AutoReadyUp",
-        "AutoVoteDiff",
-        "AutoDance",
             "Noclip",
             "SpecterFarm",
             "AllFiendFarm",
@@ -5877,146 +5655,7 @@ local function getMyHumanoid()
     return c and c:FindFirstChildOfClass("Humanoid"), c
 end
 
-
-----------------------------------------------------------------
--- Mansion raid: trash quota → Neon Hunter → Sideburns Guy
-----------------------------------------------------------------
-local MANSION_CF = CFrame.new(
-    1027.09949, 1661.1665, -825.437988,
-    0.117095001, -9.35168245e-08, -0.99312073,
-    -3.89199926e-08, 1, -9.87535174e-08,
-    0.99312073, 5.02157924e-08, 0.117095001
-)
-local MANSION_QUOTA = { Normal = 11, Hard = 14, Insane = 18 }
-local MANSION_TRASH = {
-    "Fly Fiend", "Mannequin Fiend", "Mantis Fiend", "Toxin Fiend", "Wasp Fiend",
-    "FlyFiend", "MannequinFiend", "MantisFiend", "ToxinFiend", "WaspFiend",
-}
-local mansionPhase = "trash" -- trash | neon | guy
-local mansionKills = 0
-local mansionLastTarget = nil
-
-local function mansionReset()
-    mansionPhase = "trash"
-    mansionKills = 0
-    mansionLastTarget = nil
-end
-
-local function mansionQuota()
-    return MANSION_QUOTA[raidDifficulty] or MANSION_QUOTA.Normal
-end
-
-local function isMansionTrash(name)
-    if type(name) ~= "string" then return false end
-    if name == "Neon Hunter" or name == "Sideburns Guy" then return false end
-    local compact = name:gsub("%s+", "")
-    for _, n in ipairs(MANSION_TRASH) do
-        if name == n or compact == n:gsub("%s+", "") then return true end
-    end
-    -- any *Fiend* except excluded
-    if name:lower():find("fiend", 1, true) then return true end
-    return false
-end
-
-local function livingHum(m)
-    if not m then return nil, nil end
-    local isPl = false
-    pcall(function() isPl = isPlayerChar(m) end)
-    if isPl then return nil, nil end
-    local hum = m:FindFirstChildOfClass("Humanoid")
-    local root = m:FindFirstChild("HumanoidRootPart")
-    if not hum or not root or hum.Health <= 0 then return nil, nil end
-    local grounded = true
-    if type(isMobOnGround) == "function" then
-        local okg, g = pcall(isMobOnGround, root)
-        if okg then grounded = g end
-    end
-    if grounded then return hum, root end
-    return nil, nil
-end
-
-local function nearestNamed(names)
-    local living = workspace:FindFirstChild("Living")
-    local my = select(1, getHRP())
-    if not living then return nil end
-    local best, bestD = nil, math.huge
-    for _, m in ipairs(living:GetChildren()) do
-        local okName = false
-        if type(names) == "function" then
-            okName = names(m.Name)
-        else
-            for _, n in ipairs(names) do
-                if m.Name == n or m.Name:gsub("%s+", "") == n:gsub("%s+", "") then
-                    okName = true
-                    break
-                end
-            end
-        end
-        if okName then
-            local hum, root = livingHum(m)
-            if hum then
-                local d = my and (my.Position - root.Position).Magnitude or 0
-                if d < bestD then best, bestD = m, d end
-            end
-        end
-    end
-    return best
-end
-
-local function mansionGoSpot()
-    local ok, hrp = pcall(function() return select(1, getHRP()) end)
-    if not ok or not hrp then return end
-    local pos = MANSION_CF.Position
-    if (hrp.Position - pos).Magnitude <= 10 then return end
-    if type(pathFlyTo) == "function" then
-        pcall(pathFlyTo, pos)
-    end
-    pcall(function()
-        hrp.CFrame = MANSION_CF
-    end)
-end
-
-local function mansionPickTarget()
-    local living = workspace:FindFirstChild("Living")
-    if not living then return nil end
-    -- phase promote
-    if mansionPhase == "trash" and mansionKills >= mansionQuota() then
-        mansionPhase = "neon"
-    end
-    if mansionPhase == "neon" then
-        local guy = nearestNamed({ "Sideburns Guy", "SideburnsGuy" })
-        if guy then
-            mansionPhase = "guy"
-        end
-    end
-    if mansionPhase == "trash" then
-        return nearestNamed(isMansionTrash)
-    elseif mansionPhase == "neon" then
-        mansionGoSpot()
-        return nearestNamed({ "Neon Hunter", "NeonHunter" })
-    else -- guy
-        mansionGoSpot()
-        return nearestNamed({ "Sideburns Guy", "SideburnsGuy" })
-    end
-end
-
-local function mansionAfterKill(model)
-    if raidMode ~= "Mansion" or not model then return end
-    if mansionPhase == "trash" and isMansionTrash(model.Name) then
-        mansionKills = mansionKills + 1
-        if mansionKills >= mansionQuota() then
-            mansionPhase = "neon"
-        end
-    elseif mansionPhase == "neon" and (model.Name == "Neon Hunter" or model.Name:find("Neon")) then
-        mansionPhase = "guy"
-    end
-end
-
-
 local function raidPickTarget()
-    if raidMode == "Mansion" then
-        return mansionPickTarget()
-    end
     local living = workspace:FindFirstChild("Living")
     if not living then return nil end
     local prio = getRaidPriorityAliases()
@@ -6049,17 +5688,8 @@ task.spawn(function()
         else
             local target = raidPickTarget()
             if target then
-                pcall(function() farmOne(target) end)
-                if raidMode == "Mansion" then
-                    local hum = target:FindFirstChildOfClass("Humanoid")
-                    if not hum or hum.Health <= 0 or not target.Parent then
-                        mansionAfterKill(target)
-                    end
-                end
+                farmOne(target)
             else
-                if raidMode == "Mansion" and mansionPhase ~= "trash" then
-                    mansionGoSpot()
-                end
                 task.wait(0.05)
             end
             task.wait(0.03)
@@ -6068,12 +5698,11 @@ task.spawn(function()
 end)
 
 -- UI
-Dropdown("RaidMode", {
-    Values = { "Zombie", "Makima", "Mansion" },
+UI.RaidFarm:AddDropdown("RaidMode", {
+    Values = { "Zombie", "Makima" },
     Default = 1,
     Multi = false,
     Text = "Raid Type",
-    Tooltip = "Zombie/Mansion: vote+ready. Makima: farm only.",
     Callback = function(v)
         if type(v) == "table" then
             for k, on in pairs(v) do
@@ -6083,29 +5712,23 @@ Dropdown("RaidMode", {
         elseif type(v) == "string" then
             raidMode = v
         end
-        if raidMode ~= "Makima" and raidMode ~= "Mansion" then raidMode = "Zombie" end
-        if raidMode == "Makima" then
-            autoReadyUp = false
-            autoVoteDiff = false
-        elseif raidMode == "Mansion" or raidMode == "Zombie" then
-            autoReadyUp = true
-            autoVoteDiff = true
-        end
+        if raidMode ~= "Makima" then raidMode = "Zombie" end
+        notify("RaidMode", raidMode)
     end,
 })
 
-
+UI.RaidFarm:AddLabel("Zombie fixed targets:")
 for _, name in ipairs(ZOMBIE_RAID_DISPLAY) do
-    Label("• " .. name)
+    UI.RaidFarm:AddLabel("• " .. name)
 end
-
-
-
+UI.RaidFarm:AddLabel("Zombie R1-4: Crawler > Tank > Zombie")
+UI.RaidFarm:AddLabel("Zombie R5: Zombie Devil only")
+UI.RaidFarm:AddLabel("Makima fixed targets:")
 for _, name in ipairs(MAKIMA_RAID_DISPLAY) do
-    Label("• " .. name)
+    UI.RaidFarm:AddLabel("• " .. name)
 end
-
-
+UI.RaidFarm:AddLabel("Makima order:")
+UI.RaidFarm:AddLabel("Longsword User > Fake Makima > Makima")
 
 local function pressKeyT()
     pcall(function()
@@ -6117,12 +5740,11 @@ local function pressKeyT()
 end
 
 local raidDifficulty = "Normal" -- Normal | Hard | Insane
-Dropdown("RaidDifficulty", {
+UI.RaidFarm:AddDropdown("RaidDifficulty", {
     Values = { "Normal", "Hard", "Insane" },
     Default = 1,
     Multi = false,
     Text = "Zombie difficulty",
-    Tooltip = "Normal / Hard / Insane — used when Raid Farm is on (Zombie only)",
     Callback = function(v)
         if type(v) == "table" then
             for k, on in pairs(v) do
@@ -6132,47 +5754,62 @@ Dropdown("RaidDifficulty", {
         elseif type(v) == "string" then
             raidDifficulty = v
         end
-        if raidDifficulty ~= "Hard" and raidDifficulty ~= "Insane" then
-            raidDifficulty = "Normal"
-        end
         notify("RaidDiff", raidDifficulty)
-        if autoVoteDiff then
+        -- try click matching difficulty button / remote when zombie mode
+        if raidMode == "Zombie" then
             task.spawn(function()
-                voteRaidDifficulty(raidDifficulty)
+                scanAndClick({ raidDifficulty, "노말", "하드", "미친", "Normal", "Hard", "Insane" }, nil)
+                local ev = ReplicatedStorage:FindFirstChild("events")
+                local remote = ev and ev:FindFirstChild("remote")
+                if remote then
+                    for _, args in ipairs({
+                        { "SetDifficulty", raidDifficulty },
+                        { "RaidDifficulty", raidDifficulty },
+                        { "Difficulty", raidDifficulty },
+                    }) do
+                        pcall(function() remote:FireServer(unpack(args)) end)
+                    end
+                end
             end)
         end
     end,
 })
+UI.RaidFarm:AddLabel("Zombie only · Makima has no difficulty")
+UI.RaidFarm:AddToggle("AutoReadyUp", {
+    Text = "Auto Ready Up (raid end)",
+    Default = true,
+    Callback = function(v)
+        autoReadyUp = v
+        notify("ReadyUp", v and "ON" or "OFF")
+    end,
+})
 
-
-Toggle("RaidFarm", {
+UI.RaidFarm:AddToggle("RaidFarm", {
     Text = "Raid Farm",
     Default = false,
-    Tooltip = "Farm raid mobs. Zombie: auto difficulty vote + ready after wave end. Makima: farm only.",
     Callback = function(v)
         raidFarmOn = v
         if v then
+            -- one T press on enable (tool / mode)
             task.defer(pressKeyT)
-            if raidMode == "Makima" then
-                autoReadyUp = false
-                autoVoteDiff = false
-            else
-                autoReadyUp = true
-                autoVoteDiff = true
-                mansionReset()
-                task.spawn(function()
-                    voteRaidDifficulty(raidDifficulty)
-                end)
-            end
         end
+        notify("RaidFarm", v and "ON" or "OFF")
     end,
 })
 
 
+
+
+local function raidHuntText()
+    return "Hunt: Behind only (" .. tostring(atkBehind) .. " studs)"
+end
+
+local raidHuntLabel = UI.RaidFarm:AddLabel(raidHuntText())
+
 -- Behind-only for raid as well
 huntModes = { "Behind" }
 
-Slider("RaidAtkBehind", {
+UI.RaidFarm:AddSlider("RaidAtkBehind", {
     Text = "Behind Studs",
     Default = 4,
     Min = 0,
@@ -6187,7 +5824,7 @@ Slider("RaidAtkBehind", {
         end)
     end,
 })
-
+UI.RaidFarm:AddLabel("Behind-only · no hover · no air-heal")
 
 
 
@@ -6241,15 +5878,17 @@ task.spawn(function()
     end
 end)
 
-Toggle("SpecterFarm", {
+UI.Specter:AddToggle("SpecterFarm", {
     Text = "Specter Farm (night)",
-    Tooltip = "Farm specter mobs using same path as auto-farm",
     Default = false,
     Callback = function(v)
         specterFarmOn = v
         notify("SpecterFarm", v and "ON" or "OFF")
     end,
 })
+UI.Specter:AddLabel("specter / specterN in Living")
+UI.Specter:AddLabel("Same farmOne path as Auto Farm")
+UI.Specter:AddLabel("Works at night event")
 
 ----------------------------------------------------------------
 -- All Fiend Farm: any *Fiend*, nearest first, same farmOne path
@@ -6297,15 +5936,16 @@ end)
 
 -- reuse Specter group area for All Farm toggle under Farm tab
 UI.AllFarm = Tabs.Farm:AddLeftGroupbox("All Fiend")
-Toggle("AllFiendFarm", {
+UI.AllFarm:AddToggle("AllFiendFarm", {
     Text = "All Fiend Farm",
-    Tooltip = "Nearest Fiend-name mob, same attack path",
     Default = false,
     Callback = function(v)
         allFiendFarmOn = v
         notify("AllFiendFarm", v and "ON" or "OFF")
     end,
 })
+UI.AllFarm:AddLabel("All *Fiend* names · nearest first")
+UI.AllFarm:AddLabel("Same behind + speed cap as Auto Farm")
 
 ----------------------------------------------------------------
 -- Specter ESP
@@ -6402,6 +6042,7 @@ SpecterESPGroup:AddToggle("SpecterESP", {
         notify("SpecterESP", v and "ON" or "OFF")
     end,
 })
+SpecterESPGroup:AddLabel("Purple outline · night specters")
 
 
 -- Autoload AFTER all toggles exist (RaidFarm / MobFarm / etc.)
@@ -6419,129 +6060,4 @@ task.defer(function()
     end
 end)
 
-pcall(function()
-    if Library and type(Library.Notify) == "function" then
-        Library:Notify({ Title = "CMDH Hub", Description = "Loaded", Time = 3 })
-    end
-end)
-
-----------------------------------------------------------------
--- Join player server (username, not display name)
-----------------------------------------------------------------
-do
-    local JoinBox = Tabs.Server:AddRightGroupbox("Join Player")
-    local joinName = ""
-    local function resolveUserId(username)
-        username = tostring(username or ""):gsub("^%s+", ""):gsub("%s+$", "")
-        if username == "" then return nil, "empty" end
-        -- exact username
-        local ok, id = pcall(function()
-            return Players:GetUserIdFromNameAsync(username)
-        end)
-        if ok and type(id) == "number" then return id end
-        -- users API
-        local req = (syn and syn.request) or http_request or request
-        if req then
-            local body = HttpService:JSONEncode({ usernames = { username }, excludeBannedUsers = true })
-            local ok2, res = pcall(function()
-                return req({
-                    Url = "https://users.roblox.com/v1/usernames/users",
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = body,
-                })
-            end)
-            if ok2 and res and (res.Body or res.body) then
-                local ok3, data = pcall(function()
-                    return HttpService:JSONDecode(res.Body or res.body)
-                end)
-                if ok3 and data and data.data and data.data[1] then
-                    return data.data[1].id
-                end
-            end
-        end
-        return nil, "user not found"
-    end
-
-    local function joinUserServer(username)
-        local userId, err = resolveUserId(username)
-        if not userId then return false, err or "fail" end
-        -- presence (executor cookie if available)
-        local req = (syn and syn.request) or http_request or request
-        local jobId, place = nil, PlaceId
-        if req then
-            local ok, res = pcall(function()
-                return req({
-                    Url = "https://presence.roblox.com/v1/presence/users",
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = HttpService:JSONEncode({ userIds = { userId } }),
-                })
-            end)
-            if ok and res and (res.Body or res.body) then
-                local ok2, data = pcall(function()
-                    return HttpService:JSONDecode(res.Body or res.body)
-                end)
-                if ok2 and data and data.userPresences and data.userPresences[1] then
-                    local pr = data.userPresences[1]
-                    jobId = pr.gameId or pr.GameId
-                    place = pr.placeId or pr.PlaceId or PlaceId
-                end
-            end
-        end
-        if jobId and jobId ~= "" then
-            local ok3 = pcall(function()
-                TeleportService:TeleportToPlaceInstance(place, jobId, Player)
-            end)
-            return ok3, ok3 and "teleporting" or "teleport failed"
-        end
-        -- fallback: GetPlayerPlaceInstanceAsync if exists
-        local ok4, p1, j1 = pcall(function()
-            return TeleportService:GetPlayerPlaceInstanceAsync(userId)
-        end)
-        if ok4 and j1 then
-            pcall(function()
-                TeleportService:TeleportToPlaceInstance(p1 or PlaceId, j1, Player)
-            end)
-            return true, "teleporting"
-        end
-        return false, "player offline or presence blocked"
-    end
-
-    JoinBox:AddInput("JoinUsername", {
-        Default = "",
-        Numeric = false,
-        Finished = true,
-        Text = "Username",
-        Tooltip = "Roblox username (not display name)",
-        Placeholder = "ExactUsername",
-        Callback = function(v)
-            joinName = tostring(v or "")
-        end,
-    })
-    JoinBox:AddButton({
-        Text = "Join Server",
-        Tooltip = "Teleport to that user's current server",
-        Func = function()
-            task.spawn(function()
-                local ok, msg = joinUserServer(joinName)
-                pcall(function()
-                    if Library and Library.Notify then
-                        Library:Notify({
-                            Title = "Join",
-                            Description = ok and "OK" or tostring(msg),
-                            Time = 3,
-                        })
-                    end
-                end)
-            end)
-        end,
-    })
-end
-
-
--- final show UI
-pcall(function()
-    if Window and Window.SetVisible then Window:SetVisible(true) end
-end)
-print("[CMDH] loaded")
+print("[CMDH] mob farm + stun + aimbot + keybinds")
