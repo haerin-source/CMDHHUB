@@ -3670,7 +3670,7 @@ do
         return Library:CreateWindow({
             Title = "CMDH Hub | Devil's Heart",
             Center = true,
-            AutoShow = false,
+            AutoShow = true,
             TabPadding = 8,
             MenuFadeTime = 0.2,
         })
@@ -3680,7 +3680,12 @@ do
         return
     end
     Window = win
-    pcall(function() Window:SetVisible(false) end)
+    pcall(function()
+        if Window.SetVisible then Window:SetVisible(true) end
+    end)
+    pcall(function()
+        Library.ToggleKeybind = Enum.KeyCode.RightShift
+    end)
 end
 
 local Tabs = {
@@ -6482,4 +6487,8 @@ do
 end
 
 
+-- final show UI
+pcall(function()
+    if Window and Window.SetVisible then Window:SetVisible(true) end
+end)
 print("[CMDH] loaded")
