@@ -3,24 +3,32 @@
   Place-locked | config
 ]]
 
--- never rely on warn/print being intact
-local function bootLog(...)
-    local msg = ""
-    local n = select("#", ...)
-    for i = 1, n do
-        if i > 1 then msg = msg .. " " end
-        msg = msg .. tostring(select(i, ...))
+-- safe globals (some executors strip helpers)
+local _select = select
+local _unpack = unpack or table.unpack
+local _typeof = typeof or function(x)
+    local t = type(x)
+    if t == "userdata" or t == "table" then
+        local ok, r = pcall(function() return x.ClassName end)
+        if ok and r then return r end
     end
-    pcall(function() print("[CMDH] " .. msg) end)
-    pcall(function()
-        if type(warn) == "function" then warn("[CMDH] " .. msg) end
-    end)
+    return t
 end
-
 if type(table.clear) ~= "function" then
     function table.clear(tab)
+        if type(tab) ~= "table" then return end
         for k in pairs(tab) do tab[k] = nil end
     end
+end
+
+local function bootLog(...)
+    local args = { ... }
+    local msg = ""
+    for i = 1, #args do
+        if i > 1 then msg = msg .. " " end
+        msg = msg .. tostring(args[i])
+    end
+    pcall(function() print("[CMDH] " .. msg) end)
 end
 local PLACE_ID = 11345435986
 local placeOk, placeId = pcall(function() return game.PlaceId end)
@@ -3513,7 +3521,12 @@ local function makeTextLabel()
 end
 
 -- hub core
-makeTextLabel()
+do
+    local ok, err = pcall(makeTextLabel)
+    if not ok then
+        print("[CMDH] AutoParry init fail:", tostring(err))
+    end
+end
 
 
 -- Heart distance (workspace scan every 5s, text every 0.4s)
@@ -3627,9 +3640,14 @@ local function fetchLib(path)
     return nil
 end
 
-local Library = fetchLib("Library.lua")
-if not Library then
-    warn("[CMDH] Linoria Library failed to load (HttpGet/loadstring nil)")
+local Library = nil
+do
+    local ok, lib = pcall(fetchLib, "Library.lua")
+    if ok then Library = lib end
+end
+if type(Library) ~= "table" and type(Library) ~= "userdata" then
+    pcall(function() warn("[CMDH] Linoria Library failed to load") end)
+    pcall(function() print("[CMDH] STOP: Library nil — check HttpGet") end)
     return
 end
 
