@@ -4538,6 +4538,7 @@ end
 -- Auto Yes on quest complete / Ready Up / Enter — signal fire only (no mouse)
 local autoQuestYes = true
 local autoReadyUp = true
+local autoVoteDiff = false
 
 local function fireButton(btn)
     if not btn then return false end
@@ -4552,7 +4553,10 @@ local function fireButton(btn)
         if typeof(getconnections) == "function" then
             for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
                 pcall(function()
-                    if c.Fire then c:Fire() elseif c.Function then c.Function() end
+                    if c.Fire then c:Fire()
+                    elseif c.fire then c:fire()
+                    elseif c.Function then c.Function()
+                    end
                 end)
                 ok = true
             end
@@ -4561,7 +4565,81 @@ local function fireButton(btn)
     pcall(function()
         if btn.Activate then btn:Activate() ok = true end
     end)
+    -- virtual mouse (game offset +36 often needed)
+    if not ok then
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            local pos = btn.AbsolutePosition
+            local size = btn.AbsoluteSize
+            local x = pos.X + size.X / 2
+            local y = pos.Y + size.Y / 2 + 36
+            vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            task.wait(0.05)
+            vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
+            ok = true
+        end)
+    end
     return ok
+end
+
+-- Raid end Ready (RaidMenuEnd.Ready.text)
+local function doRaidReadyUp()
+    local pg = Player:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    local raidMenu = pg:FindFirstChild("RaidMenuEnd", true)
+    if not raidMenu then return false end
+    local ready = raidMenu:FindFirstChild("Ready", true)
+    local readyBtn = ready and ready:FindFirstChild("text")
+    if readyBtn and (readyBtn:IsA("TextButton") or readyBtn:IsA("ImageButton")) then
+        return fireButton(readyBtn)
+    end
+    -- fallback: any text under Ready
+    if ready then
+        for _, d in ipairs(ready:GetDescendants()) do
+            if d:IsA("TextButton") or d:IsA("ImageButton") then
+                if fireButton(d) then return true end
+            end
+        end
+    end
+    return false
+end
+
+-- Difficulty select + Vote (Normal / Hard / Insane)
+local function voteRaidDifficulty(diffName)
+    diffName = diffName or raidDifficulty or "Normal"
+    local pg = Player:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    local targetClean = string.lower(tostring(diffName))
+    local diffFolder = nil
+    for _, v in ipairs(pg:GetDescendants()) do
+        if v:IsA("TextButton") and v.Name == "Button" and v.Parent
+            and string.lower(tostring(v.Parent.Name)) == targetClean then
+            diffFolder = v.Parent
+            break
+        end
+    end
+    local clicked = false
+    if diffFolder and diffFolder:FindFirstChild("Button") then
+        clicked = fireButton(diffFolder.Button)
+        task.wait(0.4)
+    end
+    local voteBtn = nil
+    for _, v in ipairs(pg:GetDescendants()) do
+        if v:IsA("TextButton") and v.Name == "text" and v.Parent
+            and v.Parent.Name == "Unlock" then
+            local tx = ""
+            pcall(function() tx = string.lower(tostring(v.Text or "")) end)
+            if tx == "vote" then
+                voteBtn = v
+                break
+            end
+        end
+    end
+    if voteBtn then
+        fireButton(voteBtn)
+        return true
+    end
+    return clicked
 end
 
 local function buttonMatches(btn, words)
@@ -4648,10 +4726,15 @@ task.spawn(function()
             end
         end
         if autoReadyUp then
-            local hit = scanAndClick({ "Ready Up", "ReadyUp", "ready up" }, nil)
-            if hit then
+            if doRaidReadyUp() then
                 notify("Raid", "Ready Up")
                 task.wait(0.8)
+            end
+        end
+        if autoVoteDiff then
+            if voteRaidDifficulty(raidDifficulty) then
+                notify("RaidVote", tostring(raidDifficulty))
+                task.wait(1.0)
             end
         end
         task.wait(0.25)
@@ -5526,6 +5609,135 @@ do
     end
 end
 
+
+----------------------------------------------------------------
+-- Auto Dance (DanceMachine A/S/K/L)
+----------------------------------------------------------------
+do
+    local RunService = game:GetService("RunService")
+    local Players = game:GetService("Players")
+    local mapKeys = { Left = "A", Down = "S", Up = "K", Right = "L" }
+    local refY = {}
+    local danceOn = false
+    local arrowsFolder = nil
+    local childConn = nil
+    local lp = Players.LocalPlayer
+
+    local function noteHit(frame)
+        if not danceOn or not frame or not frame:IsA("Frame") then return end
+        if not mapKeys[frame.Name] then return end
+        local id = frame.Name .. "_" .. tostring(frame:GetDebugId())
+        frame:SetAttribute("RenderStepID", id)
+        RunService:BindToRenderStep(id, Enum.RenderPriority.Input.Value, function()
+            if not danceOn or not frame.Parent then
+                pcall(function() RunService:UnbindFromRenderStep(id) end)
+                return
+            end
+            local y = frame.AbsolutePosition.Y
+            local target = refY[frame.Name]
+            if y and target and y >= target - 10 and y <= target + 10 then
+                local key = Enum.KeyCode[mapKeys[frame.Name]]
+                pcall(function()
+                    local vim = virtualInputManager or game:GetService("VirtualInputManager")
+                    vim:SendKeyEvent(true, key, false, game)
+                    task.wait(0.05)
+                    vim:SendKeyEvent(false, key, false, game)
+                end)
+                pcall(function() frame:Destroy() end)
+                pcall(function() RunService:UnbindFromRenderStep(id) end)
+            end
+        end)
+    end
+
+    local function setupDanceMachine()
+        if not danceOn or not lp then return end
+        local pg = lp:FindFirstChild("PlayerGui")
+        if not pg then return end
+        local dm = pg:FindFirstChild("DanceMachine")
+        if not dm then return end
+        local gameFrame = dm:FindFirstChild("Game")
+        if not gameFrame then return end
+        arrowsFolder = gameFrame:FindFirstChild("Arrows")
+        if not arrowsFolder then return end
+        table.clear(refY)
+        for _, ch in ipairs(arrowsFolder:GetChildren()) do
+            if ch:IsA("ImageLabel") and mapKeys[ch.Name] then
+                refY[ch.Name] = ch.AbsolutePosition.Y
+            end
+        end
+        for k, _ in pairs(mapKeys) do
+            if not refY[k] then refY[k] = 0 end
+        end
+        if childConn then pcall(function() childConn:Disconnect() end) end
+        childConn = arrowsFolder.ChildAdded:Connect(function(ch)
+            task.defer(function() noteHit(ch) end)
+        end)
+        for _, ch in ipairs(arrowsFolder:GetChildren()) do
+            noteHit(ch)
+        end
+        print("[CMDH] DanceMachine hooked")
+    end
+
+    local function setDance(on)
+        danceOn = not not on
+        if not danceOn then
+            if childConn then pcall(function() childConn:Disconnect() end) childConn = nil end
+            if arrowsFolder then
+                for _, ch in ipairs(arrowsFolder:GetChildren()) do
+                    local id = ch:GetAttribute("RenderStepID")
+                    if id then pcall(function() RunService:UnbindFromRenderStep(id) end) end
+                end
+            end
+            print("[CMDH] AutoDance OFF")
+        else
+            setupDanceMachine()
+            print("[CMDH] AutoDance ON")
+        end
+    end
+
+    if lp then
+        local pg = lp:WaitForChild("PlayerGui", 10)
+        if pg then
+            pg.ChildAdded:Connect(function(ch)
+                if ch.Name == "DanceMachine" and danceOn then
+                    task.wait(0.2)
+                    setupDanceMachine()
+                end
+            end)
+        end
+    end
+
+    _G.DanceAPI = _G.DanceAPI or {}
+    _G.DanceAPI.SetAutoDanceEnabled = setDance
+    _G.DanceAPI.IsAutoDanceEnabled = function() return danceOn end
+    setDance(false)
+
+    -- UI: Main combat area if present, else Settings
+    local danceBox = nil
+    pcall(function()
+        if Tabs and Tabs.Main then
+            danceBox = Tabs.Main:AddRightGroupbox("Dance")
+        end
+    end)
+    if not danceBox then
+        pcall(function()
+            danceBox = Tabs.Settings:AddRightGroupbox("Dance")
+        end)
+    end
+    if danceBox then
+        danceBox:AddToggle("AutoDance", {
+            Text = "Auto Dance Machine",
+            Default = false,
+            Callback = function(v)
+                setDance(v)
+                notify("Dance", v and "ON" or "OFF")
+            end,
+        })
+        danceBox:AddLabel("Keys A S K L · DanceMachine GUI")
+    end
+end
+
+
 ----------------------------------------------------------------
 -- Keybinds for all toggles (Linoria KeyPicker, set in UI)
 ----------------------------------------------------------------
@@ -5558,6 +5770,9 @@ task.defer(function()
         "StunMon",
         "MobAimbot",
         "RaidFarm",
+        "AutoReadyUp",
+        "AutoVoteDiff",
+        "AutoDance",
             "Noclip",
             "SpecterFarm",
             "AllFiendFarm",
@@ -5754,22 +5969,13 @@ UI.RaidFarm:AddDropdown("RaidDifficulty", {
         elseif type(v) == "string" then
             raidDifficulty = v
         end
+        if raidDifficulty ~= "Hard" and raidDifficulty ~= "Insane" then
+            raidDifficulty = "Normal"
+        end
         notify("RaidDiff", raidDifficulty)
-        -- try click matching difficulty button / remote when zombie mode
-        if raidMode == "Zombie" then
+        if autoVoteDiff then
             task.spawn(function()
-                scanAndClick({ raidDifficulty, "노말", "하드", "미친", "Normal", "Hard", "Insane" }, nil)
-                local ev = ReplicatedStorage:FindFirstChild("events")
-                local remote = ev and ev:FindFirstChild("remote")
-                if remote then
-                    for _, args in ipairs({
-                        { "SetDifficulty", raidDifficulty },
-                        { "RaidDifficulty", raidDifficulty },
-                        { "Difficulty", raidDifficulty },
-                    }) do
-                        pcall(function() remote:FireServer(unpack(args)) end)
-                    end
-                end
+                voteRaidDifficulty(raidDifficulty)
             end)
         end
     end,
@@ -5781,6 +5987,32 @@ UI.RaidFarm:AddToggle("AutoReadyUp", {
     Callback = function(v)
         autoReadyUp = v
         notify("ReadyUp", v and "ON" or "OFF")
+    end,
+})
+UI.RaidFarm:AddToggle("AutoVoteDiff", {
+    Text = "Auto Vote Difficulty",
+    Default = false,
+    Callback = function(v)
+        autoVoteDiff = v
+        notify("Vote", v and ("ON " .. tostring(raidDifficulty)) or "OFF")
+    end,
+})
+UI.RaidFarm:AddButton({
+    Text = "Vote Now (selected difficulty)",
+    Func = function()
+        task.spawn(function()
+            local ok = voteRaidDifficulty(raidDifficulty)
+            notify("Vote", ok and ("OK " .. tostring(raidDifficulty)) or "UI not found")
+        end)
+    end,
+})
+UI.RaidFarm:AddButton({
+    Text = "Ready Up Now",
+    Func = function()
+        task.spawn(function()
+            local ok = doRaidReadyUp()
+            notify("Ready", ok and "OK" or "RaidMenuEnd not open")
+        end)
     end,
 })
 
