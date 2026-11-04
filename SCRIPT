@@ -3777,7 +3777,7 @@ local UI = {
     Unload = Tabs.Settings:AddLeftGroupbox("Script"),
     Silent = Tabs.Settings:AddRightGroupbox("Display"),
 }
-UI.Silent:AddToggle("ShowUI", {
+Toggle("ShowUI", {
     Text = "Show UI",
     Default = false,
     Callback = function(v)
@@ -3785,14 +3785,14 @@ UI.Silent:AddToggle("ShowUI", {
         pcall(function() Window:SetVisible(uiVisible) end)
     end,
 })
-UI.Silent:AddToggle("NotifyToggle", {
+Toggle("NotifyToggle", {
     Text = "Notifications",
     Default = true,
     Callback = function(v)
         notifyEnabled = v and true or false
     end,
 })
-UI.Silent:AddLabel("RightShift also toggles UI")
+Label("RightShift also toggles UI")
 UI.PlayerMove = Tabs.Player:AddLeftGroupbox("Movement")
 UI.Specter = Tabs.Farm:AddRightGroupbox("Specter")
 
@@ -3821,7 +3821,7 @@ end
 ----------------------------------------------------------------
 -- Combat (hub APIs)
 ----------------------------------------------------------------
-UI.Combat:AddToggle("AutoParry", {
+Toggle("AutoParry", {
     Text = "Auto Parry",
     Tooltip = "Auto block/parry on enemy attack animations",
     Default = true,
@@ -3831,7 +3831,7 @@ UI.Combat:AddToggle("AutoParry", {
     end,
 })
 
-UI.Combat:AddToggle("AutoDash", {
+Toggle("AutoDash", {
     Text = "Auto Dash",
     Default = false,
     Callback = function(v)
@@ -3839,7 +3839,7 @@ UI.Combat:AddToggle("AutoDash", {
     end,
 })
 
-UI.Combat:UI.Combat:UI.Combat:AddToggle("AutoParryKick", {
+Toggle("AutoParryKick", {
     Text = "Auto Parry Kick",
     Default = false,
     Callback = function(v)
@@ -3850,7 +3850,7 @@ UI.Combat:UI.Combat:UI.Combat:AddToggle("AutoParryKick", {
     end,
 })
 
-UI.Combat:AddSlider("ParryKickDelay", {
+Slider("ParryKickDelay", {
     Text = "Parry Kick Delay",
     Default = 0.15, Min = 0, Max = 0.25, Rounding = 2,
     Callback = function(v)
@@ -3858,7 +3858,7 @@ UI.Combat:AddSlider("ParryKickDelay", {
     end,
 })
 
-UI.Combat:AddToggle("AutoAttack", {
+Toggle("AutoAttack", {
     Text = "Auto Attack Reactions",
     Default = true,
     Callback = function(v)
@@ -3870,7 +3870,7 @@ UI.Combat:AddToggle("AutoAttack", {
 ----------------------------------------------------------------
 -- Heart status (hub tracker)
 ----------------------------------------------------------------
-local heartLabel = UI.Heart:AddLabel("Devil Heart: scanning...")
+local heartLabel = Label("Devil Heart: scanning...")
 
 task.spawn(function()
     while not unloaded do
@@ -3919,7 +3919,7 @@ local function wipePlayerESP()
     end
 end
 
-UI.PlayerESP:AddToggle("PlayerESP", {
+Toggle("PlayerESP", {
     Text = "Player ESP",
     Default = false,
     Callback = function(v)
@@ -4030,7 +4030,7 @@ task.spawn(function()
     end
 end)
 
-UI.FiendESP:AddToggle("FiendESP", {
+Toggle("FiendESP", {
     Text = "Fiend ESP",
     Default = false,
     Callback = function(v)
@@ -4048,9 +4048,9 @@ UI.FiendESP:AddToggle("FiendESP", {
         end)
     end,
 })
-UI.FiendESP:AddLabel("White normal / Yellow mutation")
+Label("White normal / Yellow mutation")
 
-UI.DevilESP:AddToggle("DevilESP", {
+Toggle("DevilESP", {
     Text = "Devil ESP",
     Default = false,
     Callback = function(v)
@@ -4068,7 +4068,7 @@ UI.DevilESP:AddToggle("DevilESP", {
         end)
     end,
 })
-UI.DevilESP:AddLabel("White normal / Yellow mutation")
+Label("White normal / Yellow mutation")
 
 -- keep hub combined NPC ESP off (we use split)
 if _G.NPCEspAPI and _G.NPCEspAPI.SetEnabled then
@@ -4212,14 +4212,14 @@ local function serverHop(mode)
     end)
 end
 
-UI.Hop:AddSlider("HopMin", { Text = "Min Players", Default = 1, Min = 0, Max = 30, Rounding = 0, Callback = function(v) hopMinPlayers = v end })
-UI.Hop:AddSlider("HopMax", { Text = "Max Players", Default = 20, Min = 1, Max = 50, Rounding = 0, Callback = function(v) hopMaxPlayers = v end })
-UI.Hop:AddButton({ Text = "Server Hop (Random)", Func = function() serverHop("random") end })
-UI.Hop:AddButton({ Text = "Server Hop (Lowest Players)", Func = function() serverHop("lowest") end })
-UI.Hop:AddButton({ Text = "Server Hop (Lowest Ping)", Func = function() serverHop("ping") end })
-UI.Hop:AddLabel("Skips current JobId")
-UI.Hop:AddLabel("Random: never re-visit until full cycle reset")
-UI.Hop:AddToggle("AutoHop", {
+Slider("HopMin", { Text = "Min Players", Default = 1, Min = 0, Max = 30, Rounding = 0, Callback = function(v) hopMinPlayers = v end })
+Slider("HopMax", { Text = "Max Players", Default = 20, Min = 1, Max = 50, Rounding = 0, Callback = function(v) hopMaxPlayers = v end })
+Button({ Text = "Server Hop (Random)", Func = function() serverHop("random") end })
+Button({ Text = "Server Hop (Lowest Players)", Func = function() serverHop("lowest") end })
+Button({ Text = "Server Hop (Lowest Ping)", Func = function() serverHop("ping") end })
+Label("Skips current JobId")
+Label("Random: never re-visit until full cycle reset")
+Toggle("AutoHop", {
     Text = "Auto Hop if No Heart",
     Default = false,
     Callback = function(v)
@@ -4251,28 +4251,28 @@ local function copyCode(c)
     if setclipboard then setclipboard(c) elseif toclipboard then toclipboard(c) end
     notify("Codes", c)
 end
-for _, c in ipairs(YEN) do UI.YenCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(EXP) do UI.ExpCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(BULLET) do UI.BulletCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(AURA) do UI.AuraCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(CONTRACT) do UI.ContractCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(SKILL) do UI.SkillCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(HYBRID) do UI.HybridCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(FIEND) do UI.FiendCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-UI.YenCode:AddLabel("Some codes may no longer redeem.")
-UI.ExpCode:AddLabel("Some codes may no longer redeem.")
-UI.BulletCode:AddLabel("Some codes may no longer redeem.")
-UI.AuraCode:AddLabel("Some codes may no longer redeem.")
-UI.ContractCode:AddLabel("Some codes may no longer redeem.")
-UI.SkillCode:AddLabel("Some codes may no longer redeem.")
-UI.HybridCode:AddLabel("Some codes may no longer redeem.")
-UI.FiendCode:AddLabel("Some codes may no longer redeem.")
+for _, c in ipairs(YEN) do Button({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(EXP) do Button({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(BULLET) do Button({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(AURA) do Button({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(CONTRACT) do Button({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(SKILL) do Button({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(HYBRID) do Button({ Text = c, Func = function() copyCode(c) end }) end
+for _, c in ipairs(FIEND) do Button({ Text = c, Func = function() copyCode(c) end }) end
+Label("Some codes may no longer redeem.")
+Label("Some codes may no longer redeem.")
+Label("Some codes may no longer redeem.")
+Label("Some codes may no longer redeem.")
+Label("Some codes may no longer redeem.")
+Label("Some codes may no longer redeem.")
+Label("Some codes may no longer redeem.")
+Label("Some codes may no longer redeem.")
 
 ----------------------------------------------------------------
 -- AFK
 ----------------------------------------------------------------
 local afkConn
-UI.Afk:AddToggle("AntiAFK", {
+Toggle("AntiAFK", {
     Text = "Anti-AFK",
     Default = false,
     Callback = function(v)
@@ -4362,7 +4362,7 @@ local function setNoclip(on)
     end)
 end
 
-UI.PlayerMove:AddToggle("Noclip", {
+Toggle("Noclip", {
     Text = "Noclip",
     Tooltip = "Pass through parts (CanCollide off)",
     Default = false,
@@ -4370,7 +4370,7 @@ UI.PlayerMove:AddToggle("Noclip", {
         setNoclip(v)
     end,
 })
-UI.PlayerMove:local flyPlatformOn = false
+local flyPlatformOn = false
 local flyPlatformPart = nil
 local flyPlatformConn = nil
 
@@ -4415,14 +4415,14 @@ local function setFlyPlatform(on)
     end)
 end
 
-UI.PlayerMove:AddToggle("FlyPlatform", {
+Toggle("FlyPlatform", {
     Text = "Fly Platform",
     Default = false,
     Callback = function(v)
         setFlyPlatform(v)
     end,
 })
-UI.PlayerMove:UI.Unload:AddButton({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
+Button({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
 Library:OnUnload(function() unloaded = true end)
 
 
@@ -5088,7 +5088,7 @@ local function priorityText()
     return "Priority: " .. table.concat(parts, " > ")
 end
 
-local prioLabel = UI.MobFarm:AddLabel(priorityText())
+local prioLabel = Label(priorityText())
 
 local function toggleMobPriority(name)
     if not name or name == "(no mobs yet)" then return end
@@ -5105,7 +5105,7 @@ local function toggleMobPriority(name)
     notify("Farm", "P" .. #selectedMobs .. " " .. name)
 end
 
-UI.MobFarm:AddToggle("MobFarm", {
+Toggle("MobFarm", {
     Text = "Auto-farm",
     Default = false,
     Callback = function(v)
@@ -5115,7 +5115,7 @@ UI.MobFarm:AddToggle("MobFarm", {
 })
 
 -- Multi dropdown: selecting toggles priority membership (Linoria multi)
-local mobDropdown = UI.MobFarm:AddDropdown("SelectMobs", {
+local mobDropdown = Dropdown("SelectMobs", {
     Values = mobNames,
     Default = {},
     Multi = true,
@@ -5151,7 +5151,7 @@ local mobDropdown = UI.MobFarm:AddDropdown("SelectMobs", {
     end,
 })
 
-UI.MobFarm:AddSlider("FarmFlySpeed", {
+Slider("FarmFlySpeed", {
     Text = "Fly Speed",
     Default = 40,
     Min = 40,
@@ -5165,12 +5165,12 @@ local function huntText()
     return "Hunt: Behind only (" .. tostring(atkBehind) .. " studs)"
 end
 
-local huntLabel = UI.MobFarm:AddLabel(huntText())
+local huntLabel = Label(huntText())
 
 -- Behind-only attack (Above/Below removed — hits from behind)
 huntModes = { "Behind" }
 
-UI.MobFarm:AddSlider("AtkBehind", {
+Slider("AtkBehind", {
     Text = "Behind Studs",
     Default = 4,
     Min = 0,
@@ -5182,7 +5182,7 @@ UI.MobFarm:AddSlider("AtkBehind", {
         pcall(function() huntLabel:SetText(huntText()) end)
     end,
 })
-UI.MobFarm:AddDropdown("AttackKeys", {
+Dropdown("AttackKeys", {
     Values = ATTACK_KEY_OPTIONS,
     Default = { R = true },
     Multi = true,
@@ -5206,8 +5206,8 @@ UI.MobFarm:AddDropdown("AttackKeys", {
         notify("AttackKeys", (#list > 0) and table.concat(list, "+") or "(remote only)")
     end,
 })
-UI.MobFarm:AddLabel("R 1 2 3 Z X C E · + NormalAttack remote")
-UI.MobFarm:AddToggle("AutoQuestYes", {
+Label("R 1 2 3 Z X C E · + NormalAttack remote")
+Toggle("AutoQuestYes", {
     Text = "Auto Yes (quest repeat)",
     Default = true,
     Callback = function(v)
@@ -5266,7 +5266,7 @@ local function watchDeath()
 end
 watchDeath()
 
-UI.MobFarm:AddToggle("DeathReequip", {
+Toggle("DeathReequip", {
     Text = "Death re-equip",
     Tooltip = "On death press hotbar key 0-9 to re-equip",
     Default = false,
@@ -5275,7 +5275,7 @@ UI.MobFarm:AddToggle("DeathReequip", {
         notify("DeathReequip", v and "ON" or "OFF")
     end,
 })
-UI.MobFarm:AddDropdown("DeathReequipKey", {
+Dropdown("DeathReequipKey", {
     Values = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
     Default = 1,
     Multi = false,
@@ -5292,7 +5292,7 @@ UI.MobFarm:AddDropdown("DeathReequipKey", {
     end,
 })
 
-UI.MobFarm:AddButton({
+Button({
     Text = "Clear priority list",
     Func = function()
         selectedMobs = {}
@@ -5301,7 +5301,7 @@ UI.MobFarm:AddButton({
     end,
 })
 
-UI.MobFarm:AddButton({
+Button({
     Text = "Refresh mob list",
     Func = function()
         local names = collectMobNames()
@@ -5370,7 +5370,7 @@ local function stunScanAll()
     end)
 end
 
-UI.MobFarm:AddToggle("StunMon", {
+Toggle("StunMon", {
     Text = "Stun Mon",
     Tooltip = "When mob HP below %, set HP to 0 (client)",
     Default = false,
@@ -5384,7 +5384,7 @@ UI.MobFarm:AddToggle("StunMon", {
         end
     end,
 })
-UI.MobFarm:AddSlider("StunThreshold", {
+Slider("StunThreshold", {
     Text = "Stun HP % (below → kill)",
     Default = 99,
     Min = 1,
@@ -5497,7 +5497,7 @@ local function startMobAim()
     end)
 end
 
-UI.MobFarm:AddToggle("MobAimbot", {
+Toggle("MobAimbot", {
     Text = "Mob Aimbot",
     Tooltip = "Camera aims nearest living mob",
     Default = false,
@@ -6068,7 +6068,7 @@ task.spawn(function()
 end)
 
 -- UI
-UI.RaidFarm:AddDropdown("RaidMode", {
+Dropdown("RaidMode", {
     Values = { "Zombie", "Makima", "Mansion" },
     Default = 1,
     Multi = false,
@@ -6096,13 +6096,13 @@ UI.RaidFarm:AddDropdown("RaidMode", {
 
 
 for _, name in ipairs(ZOMBIE_RAID_DISPLAY) do
-    UI.RaidFarm:AddLabel("• " .. name)
+    Label("• " .. name)
 end
 
 
 
 for _, name in ipairs(MAKIMA_RAID_DISPLAY) do
-    UI.RaidFarm:AddLabel("• " .. name)
+    Label("• " .. name)
 end
 
 
@@ -6117,7 +6117,7 @@ local function pressKeyT()
 end
 
 local raidDifficulty = "Normal" -- Normal | Hard | Insane
-UI.RaidFarm:AddDropdown("RaidDifficulty", {
+Dropdown("RaidDifficulty", {
     Values = { "Normal", "Hard", "Insane" },
     Default = 1,
     Multi = false,
@@ -6145,7 +6145,7 @@ UI.RaidFarm:AddDropdown("RaidDifficulty", {
 })
 
 
-UI.RaidFarm:AddToggle("RaidFarm", {
+Toggle("RaidFarm", {
     Text = "Raid Farm",
     Default = false,
     Tooltip = "Farm raid mobs. Zombie: auto difficulty vote + ready after wave end. Makima: farm only.",
@@ -6169,14 +6169,10 @@ UI.RaidFarm:AddToggle("RaidFarm", {
 })
 
 
-
-
-)
-
 -- Behind-only for raid as well
 huntModes = { "Behind" }
 
-UI.RaidFarm:AddSlider("RaidAtkBehind", {
+Slider("RaidAtkBehind", {
     Text = "Behind Studs",
     Default = 4,
     Min = 0,
@@ -6245,7 +6241,7 @@ task.spawn(function()
     end
 end)
 
-UI.Specter:AddToggle("SpecterFarm", {
+Toggle("SpecterFarm", {
     Text = "Specter Farm (night)",
     Tooltip = "Farm specter mobs using same path as auto-farm",
     Default = false,
@@ -6301,7 +6297,7 @@ end)
 
 -- reuse Specter group area for All Farm toggle under Farm tab
 UI.AllFarm = Tabs.Farm:AddLeftGroupbox("All Fiend")
-UI.AllFarm:AddToggle("AllFiendFarm", {
+Toggle("AllFiendFarm", {
     Text = "All Fiend Farm",
     Tooltip = "Nearest Fiend-name mob, same attack path",
     Default = false,
