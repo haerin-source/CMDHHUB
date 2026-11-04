@@ -3889,17 +3889,21 @@ local COLOR_NPC = Color3.fromRGB(255, 255, 255)
 local COLOR_MUT = Color3.fromRGB(255, 223, 100)
 
 local notifyEnabled = true
-local function notify(t, m)
-    print("[" .. t .. "] " .. tostring(m))
-    if not notifyEnabled then return end
-    pcall(function() Library:Notify(t .. " — " .. tostring(m), 3) end)
+local NOTIFY_SILENT = true
+local function notify(title, text)
+    if NOTIFY_SILENT then return end
+    pcall(function()
+        Library:Notify({ Title = tostring(title), Description = tostring(text or ""), Time = 2 })
+    end)
 end
+
 
 ----------------------------------------------------------------
 -- Combat (hub APIs)
 ----------------------------------------------------------------
 UI.Combat:AddToggle("AutoParry", {
     Text = "Auto Parry",
+    Tooltip = "Auto block/parry on enemy attack animations",
     Default = true,
     Callback = function(v)
         apCall("SetAutoParry", v)
@@ -3915,9 +3919,7 @@ UI.Combat:AddToggle("AutoDash", {
     end,
 })
 
-UI.Combat:AddLabel("ParryKick: needs enemy attack windup in range")
-UI.Combat:AddLabel("Does not aim — turn OFF Mob Aimbot if camera locks")
-UI.Combat:AddToggle("AutoParryKick", {
+UI.Combat:UI.Combat:UI.Combat:AddToggle("AutoParryKick", {
     Text = "Auto Parry Kick",
     Default = false,
     Callback = function(v)
@@ -4442,14 +4444,13 @@ end
 
 UI.PlayerMove:AddToggle("Noclip", {
     Text = "Noclip",
+    Tooltip = "Pass through parts (CanCollide off)",
     Default = false,
     Callback = function(v)
         setNoclip(v)
     end,
 })
-UI.PlayerMove:AddLabel("CanCollide off + micro jitter")
-
-local flyPlatformOn = false
+UI.PlayerMove:local flyPlatformOn = false
 local flyPlatformPart = nil
 local flyPlatformConn = nil
 
@@ -4501,9 +4502,7 @@ UI.PlayerMove:AddToggle("FlyPlatform", {
         setFlyPlatform(v)
     end,
 })
-UI.PlayerMove:AddLabel("Anchored pad under feet")
-
-UI.Unload:AddButton({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
+UI.PlayerMove:UI.Unload:AddButton({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
 Library:OnUnload(function() unloaded = true end)
 
 
@@ -4582,64 +4581,94 @@ local function fireButton(btn)
     return ok
 end
 
--- Raid end Ready (RaidMenuEnd.Ready.text)
+local function robustClick(btn)
+    if not btn then return false end
+    local ok = false
+    pcall(function()
+        if typeof(getconnections) == "function" then
+            for _, sig in ipairs({ "Activated", "MouseButton1Click", "MouseButton1Down" }) do
+                local ev = btn[sig]
+                if ev then
+                    for _, c in ipairs(getconnections(ev)) do
+                        pcall(function()
+                            if c.Fire then c:Fire()
+                            elseif c.fire then c:fire()
+                            elseif c.Function then c.Function()
+                            end
+                        end)
+                        ok = true
+                    end
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        local pos = btn.AbsolutePosition
+        local size = btn.AbsoluteSize
+        local x = pos.X + size.X / 2
+        local y = pos.Y + size.Y / 2 + 36
+        vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(0.05)
+        vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        ok = true
+    end)
+    return ok
+end
+
+-- Ready: RaidMenu.End.Ready.text (wave end)
 local function doRaidReadyUp()
     local pg = Player:FindFirstChild("PlayerGui")
     if not pg then return false end
-    local raidMenu = pg:FindFirstChild("RaidMenuEnd", true)
-    if not raidMenu then return false end
-    local ready = raidMenu:FindFirstChild("Ready", true)
-    local readyBtn = ready and ready:FindFirstChild("text")
-    if readyBtn and (readyBtn:IsA("TextButton") or readyBtn:IsA("ImageButton")) then
-        return fireButton(readyBtn)
+    local targetButton = nil
+    local raidMenu = pg:FindFirstChild("RaidMenu")
+    local endFolder = raidMenu and raidMenu:FindFirstChild("End")
+    local readyFolder = endFolder and endFolder:FindFirstChild("Ready")
+    targetButton = readyFolder and readyFolder:FindFirstChild("text")
+    if not targetButton then
+        local rm = pg:FindFirstChild("RaidMenuEnd", true)
+        local ready = rm and rm:FindFirstChild("Ready", true)
+        targetButton = ready and ready:FindFirstChild("text")
     end
-    -- fallback: any text under Ready
-    if ready then
-        for _, d in ipairs(ready:GetDescendants()) do
-            if d:IsA("TextButton") or d:IsA("ImageButton") then
-                if fireButton(d) then return true end
-            end
-        end
+    if targetButton and targetButton:IsA("TextButton") then
+        return robustClick(targetButton)
     end
     return false
 end
 
--- Difficulty select + Vote (Normal / Hard / Insane)
+-- Difficulty + Vote with wait for UI (max ~5s)
 local function voteRaidDifficulty(diffName)
     diffName = diffName or raidDifficulty or "Normal"
+    if diffName ~= "Hard" and diffName ~= "Insane" then diffName = "Normal" end
     local pg = Player:FindFirstChild("PlayerGui")
     if not pg then return false end
-    local targetClean = string.lower(tostring(diffName))
-    local diffFolder = nil
-    for _, v in ipairs(pg:GetDescendants()) do
-        if v:IsA("TextButton") and v.Name == "Button" and v.Parent
-            and string.lower(tostring(v.Parent.Name)) == targetClean then
-            diffFolder = v.Parent
-            break
-        end
-    end
-    local clicked = false
-    if diffFolder and diffFolder:FindFirstChild("Button") then
-        clicked = fireButton(diffFolder.Button)
-        task.wait(0.4)
-    end
-    local voteBtn = nil
-    for _, v in ipairs(pg:GetDescendants()) do
-        if v:IsA("TextButton") and v.Name == "text" and v.Parent
-            and v.Parent.Name == "Unlock" then
-            local tx = ""
-            pcall(function() tx = string.lower(tostring(v.Text or "")) end)
-            if tx == "vote" then
-                voteBtn = v
-                break
+    local targetClean = string.lower(diffName)
+    local diffFolder, voteBtn = nil, nil
+    for _ = 1, 50 do
+        diffFolder, voteBtn = nil, nil
+        for _, v in ipairs(pg:GetDescendants()) do
+            if v:IsA("TextButton") and v.Name == "Button" and v.Parent
+                and string.lower(tostring(v.Parent.Name)) == targetClean then
+                diffFolder = v.Parent
+            end
+            if v:IsA("TextButton") and v.Name == "text" and v.Parent
+                and v.Parent.Name == "Unlock" then
+                local tx = string.lower(tostring(v.Text or ""))
+                if string.find(tx, "vote", 1, true) then
+                    voteBtn = v
+                end
             end
         end
+        if diffFolder and voteBtn and voteBtn.AbsoluteSize.X > 0 then break end
+        task.wait(0.1)
     end
-    if voteBtn then
-        fireButton(voteBtn)
-        return true
+    if not (diffFolder and diffFolder:FindFirstChild("Button") and voteBtn) then
+        return false
     end
-    return clicked
+    robustClick(diffFolder.Button)
+    task.wait(0.3)
+    robustClick(voteBtn)
+    return true
 end
 
 local function buttonMatches(btn, words)
@@ -4725,16 +4754,14 @@ task.spawn(function()
                 task.wait(0.6)
             end
         end
-        if autoReadyUp then
+        if autoReadyUp and raidMode ~= "Makima" then
             if doRaidReadyUp() then
-                notify("Raid", "Ready Up")
                 task.wait(0.8)
             end
         end
-        if autoVoteDiff then
+        if autoVoteDiff and raidMode ~= "Makima" then
             if voteRaidDifficulty(raidDifficulty) then
-                notify("RaidVote", tostring(raidDifficulty))
-                task.wait(1.0)
+                task.wait(1.2)
             end
         end
         task.wait(0.25)
@@ -4765,7 +4792,7 @@ local specterFarmOn = false
 local allFiendFarmOn = false
 local raidHealing = false
 local selectedMobs = {} -- priority ordered: [1]=highest
-local MOVE_SPEED = 40 -- capped (Guillburt / ban risk above ~50)
+local MOVE_SPEED = 40
 local atkBehind = 4
 local atkAbove = 3
 local atkBelow = 3
@@ -5201,13 +5228,13 @@ local mobDropdown = UI.MobFarm:AddDropdown("SelectMobs", {
 })
 
 UI.MobFarm:AddSlider("FarmFlySpeed", {
-    Text = "Fly Speed (max 50)",
+    Text = "Fly Speed",
     Default = 40,
-    Min = 10,
-    Max = 50,
+    Min = 40,
+    Max = 40,
     Rounding = 0,
-    Callback = function(v)
-        MOVE_SPEED = math.clamp(v, 10, 50)
+    Tooltip = "Locked at 40",
+    Callback = function() MOVE_SPEED = 40
     end,
 })
 local function huntText()
@@ -5317,6 +5344,7 @@ watchDeath()
 
 UI.MobFarm:AddToggle("DeathReequip", {
     Text = "Death re-equip",
+    Tooltip = "On death press hotbar key 0-9 to re-equip",
     Default = false,
     Callback = function(v)
         deathReequipOn = v
@@ -5324,7 +5352,7 @@ UI.MobFarm:AddToggle("DeathReequip", {
     end,
 })
 UI.MobFarm:AddDropdown("DeathReequipKey", {
-    Values = { "1", "2", "3", "4", "R", "E", "Z", "X", "C", "F", "Q" },
+    Values = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
     Default = 1,
     Multi = false,
     Text = "Re-equip key",
@@ -5339,7 +5367,6 @@ UI.MobFarm:AddDropdown("DeathReequipKey", {
         end
     end,
 })
-UI.MobFarm:AddLabel("Behind-only · nearest matching mob · no hover")
 
 UI.MobFarm:AddButton({
     Text = "Clear priority list",
@@ -5362,9 +5389,6 @@ UI.MobFarm:AddButton({
     end,
 })
 
-UI.MobFarm:AddLabel("1st selected = highest priority")
-UI.MobFarm:AddLabel("Select again to remove (list shifts up)")
-UI.MobFarm:AddLabel("Sky hover → wait → hit offset (no wall path)")
 
 -- live refresh when new living models spawn
 local livingFolder = workspace:FindFirstChild("Living")
@@ -5424,6 +5448,7 @@ end
 
 UI.MobFarm:AddToggle("StunMon", {
     Text = "Stun Mon",
+    Tooltip = "When mob HP below %, set HP to 0 (client)",
     Default = false,
     Callback = function(v)
         stunMon = v
@@ -5446,7 +5471,6 @@ UI.MobFarm:AddSlider("StunThreshold", {
         notify("Stun", "threshold " .. v .. "%")
     end,
 })
-UI.MobFarm:AddLabel("Take any damage under % → HP 0")
 
 
 
@@ -5551,6 +5575,7 @@ end
 
 UI.MobFarm:AddToggle("MobAimbot", {
     Text = "Mob Aimbot",
+    Tooltip = "Camera aims nearest living mob",
     Default = false,
     Callback = function(v)
         if v then
@@ -5562,8 +5587,6 @@ UI.MobFarm:AddToggle("MobAimbot", {
         end
     end,
 })
-UI.MobFarm:AddLabel("Green outline = current target")
-UI.MobFarm:AddLabel("Skips dead NPCs (live refresh)")
 
 -- unload cleanup
 do
@@ -5619,34 +5642,54 @@ do
     local mapKeys = { Left = "A", Down = "S", Up = "K", Right = "L" }
     local refY = {}
     local danceOn = false
+    local danceAcc = 0.85 -- 0..1 hit rate
     local arrowsFolder = nil
     local childConn = nil
+    local pollConn = nil
+    local tracked = {}
     local lp = Players.LocalPlayer
 
-    local function noteHit(frame)
+    local function clearTrack(frame)
+        tracked[frame] = nil
+    end
+
+    local function armNote(frame)
         if not danceOn or not frame or not frame:IsA("Frame") then return end
         if not mapKeys[frame.Name] then return end
-        local id = frame.Name .. "_" .. tostring(frame:GetDebugId())
-        frame:SetAttribute("RenderStepID", id)
-        RunService:BindToRenderStep(id, Enum.RenderPriority.Input.Value, function()
-            if not danceOn or not frame.Parent then
-                pcall(function() RunService:UnbindFromRenderStep(id) end)
-                return
+        if tracked[frame] then return end
+        -- intentional miss
+        if math.random() > danceAcc then
+            tracked[frame] = "miss"
+            return
+        end
+        tracked[frame] = true
+    end
+
+    local function noteHit(frame)
+        armNote(frame)
+    end
+
+    local function dancePoll()
+        if not danceOn then return end
+        for frame, st in pairs(tracked) do
+            if st == true and frame.Parent then
+                local y = frame.AbsolutePosition.Y
+                local target = refY[frame.Name]
+                if y and target and y >= target - 12 and y <= target + 12 then
+                    local key = Enum.KeyCode[mapKeys[frame.Name]]
+                    pcall(function()
+                        local vim = game:GetService("VirtualInputManager")
+                        vim:SendKeyEvent(true, key, false, game)
+                        task.wait(0.03)
+                        vim:SendKeyEvent(false, key, false, game)
+                    end)
+                    pcall(function() frame:Destroy() end)
+                    clearTrack(frame)
+                end
+            elseif st == "miss" or not frame.Parent then
+                clearTrack(frame)
             end
-            local y = frame.AbsolutePosition.Y
-            local target = refY[frame.Name]
-            if y and target and y >= target - 10 and y <= target + 10 then
-                local key = Enum.KeyCode[mapKeys[frame.Name]]
-                pcall(function()
-                    local vim = virtualInputManager or game:GetService("VirtualInputManager")
-                    vim:SendKeyEvent(true, key, false, game)
-                    task.wait(0.05)
-                    vim:SendKeyEvent(false, key, false, game)
-                end)
-                pcall(function() frame:Destroy() end)
-                pcall(function() RunService:UnbindFromRenderStep(id) end)
-            end
-        end)
+        end
     end
 
     local function setupDanceMachine()
@@ -5675,19 +5718,18 @@ do
         for _, ch in ipairs(arrowsFolder:GetChildren()) do
             noteHit(ch)
         end
-        print("[CMDH] DanceMachine hooked")
+        if pollConn then pcall(function() pollConn:Disconnect() end) end
+        pollConn = RunService.Heartbeat:Connect(function()
+            if danceOn then dancePoll() end
+        end)
     end
 
     local function setDance(on)
         danceOn = not not on
         if not danceOn then
             if childConn then pcall(function() childConn:Disconnect() end) childConn = nil end
-            if arrowsFolder then
-                for _, ch in ipairs(arrowsFolder:GetChildren()) do
-                    local id = ch:GetAttribute("RenderStepID")
-                    if id then pcall(function() RunService:UnbindFromRenderStep(id) end) end
-                end
-            end
+            if pollConn then pcall(function() pollConn:Disconnect() end) pollConn = nil end
+            table.clear(tracked)
             print("[CMDH] AutoDance OFF")
         else
             setupDanceMachine()
@@ -5728,17 +5770,58 @@ do
         danceBox:AddToggle("AutoDance", {
             Text = "Auto Dance Machine",
             Default = false,
+            Tooltip = "DanceMachine notes A/S/K/L. Lower accuracy = intentional misses.",
             Callback = function(v)
                 setDance(v)
-                notify("Dance", v and "ON" or "OFF")
             end,
         })
-        danceBox:AddLabel("Keys A S K L · DanceMachine GUI")
+        danceBox:AddSlider("DanceAcc", {
+            Text = "Hit rate %",
+            Default = 85,
+            Min = 50,
+            Max = 100,
+            Rounding = 0,
+            Tooltip = "80 = hit ~80% of notes, rest intentionally missed",
+            Callback = function(v)
+                danceAcc = math.clamp(v / 100, 0.05, 1)
+            end,
+        })
     end
 end
 
 
 ----------------------------------------------------------------
+
+pcall(function()
+    local kb = Tabs.Settings:AddLeftGroupbox("Menu")
+    kb:AddLabel("UI Toggle Key")
+    pcall(function()
+        Library.KeybindFrame = Library.KeybindFrame
+    end)
+    -- Linoria global menu key
+    if Library.SetKeybindFrameVisible then
+        -- user sets in Keybinds tab if present
+    end
+    kb:AddDropdown("MenuToggleKey", {
+        Values = { "RightShift", "LeftControl", "RightControl", "LeftAlt", "RightAlt", "P", "LeftBracket", "RightBracket" },
+        Default = 1,
+        Multi = false,
+        Text = "UI Toggle Key",
+        Tooltip = "Show/hide CMDH menu",
+        Callback = function(v)
+            local name = v
+            if type(v) == "table" then
+                for k, on in pairs(v) do if on then name = type(k)=="string" and k or on break end end
+            end
+            local key = Enum.KeyCode[tostring(name)]
+            if key then
+                pcall(function() Library.ToggleKeybind = key end)
+            end
+        end,
+    })
+end)
+
+
 -- Keybinds for all toggles (Linoria KeyPicker, set in UI)
 ----------------------------------------------------------------
 task.defer(function()
@@ -5870,7 +5953,139 @@ local function getMyHumanoid()
     return c and c:FindFirstChildOfClass("Humanoid"), c
 end
 
+
+----------------------------------------------------------------
+-- Mansion raid: trash quota → Neon Hunter → Sideburns Guy
+----------------------------------------------------------------
+local MANSION_CF = CFrame.new(
+    1027.09949, 1661.1665, -825.437988,
+    0.117095001, -9.35168245e-08, -0.99312073,
+    -3.89199926e-08, 1, -9.87535174e-08,
+    0.99312073, 5.02157924e-08, 0.117095001
+)
+local MANSION_QUOTA = { Normal = 11, Hard = 14, Insane = 18 }
+local MANSION_TRASH = {
+    "Fly Fiend", "Mannequin Fiend", "Mantis Fiend", "Toxin Fiend", "Wasp Fiend",
+    "FlyFiend", "MannequinFiend", "MantisFiend", "ToxinFiend", "WaspFiend",
+}
+local mansionPhase = "trash" -- trash | neon | guy
+local mansionKills = 0
+local mansionLastTarget = nil
+
+local function mansionReset()
+    mansionPhase = "trash"
+    mansionKills = 0
+    mansionLastTarget = nil
+end
+
+local function mansionQuota()
+    return MANSION_QUOTA[raidDifficulty] or MANSION_QUOTA.Normal
+end
+
+local function isMansionTrash(name)
+    if type(name) ~= "string" then return false end
+    if name == "Neon Hunter" or name == "Sideburns Guy" then return false end
+    local compact = name:gsub("%s+", "")
+    for _, n in ipairs(MANSION_TRASH) do
+        if name == n or compact == n:gsub("%s+", "") then return true end
+    end
+    -- any *Fiend* except excluded
+    if name:lower():find("fiend", 1, true) then return true end
+    return false
+end
+
+local function livingHum(m)
+    if not m or isPlayerChar(m) then return nil, nil end
+    local hum = m:FindFirstChildOfClass("Humanoid")
+    local root = m:FindFirstChild("HumanoidRootPart")
+    if hum and root and hum.Health > 0 and isMobOnGround(root) then
+        return hum, root
+    end
+    return nil, nil
+end
+
+local function nearestNamed(names)
+    local living = workspace:FindFirstChild("Living")
+    local my = select(1, getHRP())
+    if not living then return nil end
+    local best, bestD = nil, math.huge
+    for _, m in ipairs(living:GetChildren()) do
+        local okName = false
+        if type(names) == "function" then
+            okName = names(m.Name)
+        else
+            for _, n in ipairs(names) do
+                if m.Name == n or m.Name:gsub("%s+", "") == n:gsub("%s+", "") then
+                    okName = true
+                    break
+                end
+            end
+        end
+        if okName then
+            local hum, root = livingHum(m)
+            if hum then
+                local d = my and (my.Position - root.Position).Magnitude or 0
+                if d < bestD then best, bestD = m, d end
+            end
+        end
+    end
+    return best
+end
+
+local function mansionGoSpot()
+    local hrp = select(1, getHRP())
+    if not hrp then return end
+    if (hrp.Position - MANSION_CF.Position).Magnitude > 10 then
+        pcall(function()
+            pathFlyTo(MANSION_CF.Position)
+        end)
+        pcall(function()
+            hrp.CFrame = MANSION_CF
+        end)
+    end
+end
+
+local function mansionPickTarget()
+    local living = workspace:FindFirstChild("Living")
+    if not living then return nil end
+    -- phase promote
+    if mansionPhase == "trash" and mansionKills >= mansionQuota() then
+        mansionPhase = "neon"
+    end
+    if mansionPhase == "neon" then
+        local guy = nearestNamed({ "Sideburns Guy", "SideburnsGuy" })
+        if guy then
+            mansionPhase = "guy"
+        end
+    end
+    if mansionPhase == "trash" then
+        return nearestNamed(isMansionTrash)
+    elseif mansionPhase == "neon" then
+        mansionGoSpot()
+        return nearestNamed({ "Neon Hunter", "NeonHunter" })
+    else -- guy
+        mansionGoSpot()
+        return nearestNamed({ "Sideburns Guy", "SideburnsGuy" })
+    end
+end
+
+local function mansionAfterKill(model)
+    if raidMode ~= "Mansion" or not model then return end
+    if mansionPhase == "trash" and isMansionTrash(model.Name) then
+        mansionKills = mansionKills + 1
+        if mansionKills >= mansionQuota() then
+            mansionPhase = "neon"
+        end
+    elseif mansionPhase == "neon" and (model.Name == "Neon Hunter" or model.Name:find("Neon")) then
+        mansionPhase = "guy"
+    end
+end
+
+
 local function raidPickTarget()
+    if raidMode == "Mansion" then
+        return mansionPickTarget()
+    end
     local living = workspace:FindFirstChild("Living")
     if not living then return nil end
     local prio = getRaidPriorityAliases()
@@ -5903,8 +6118,18 @@ task.spawn(function()
         else
             local target = raidPickTarget()
             if target then
+                local tname = target.Name
                 farmOne(target)
+                if raidMode == "Mansion" then
+                    local hum = target:FindFirstChildOfClass("Humanoid")
+                    if not hum or hum.Health <= 0 or not target.Parent then
+                        mansionAfterKill(target)
+                    end
+                end
             else
+                if raidMode == "Mansion" and mansionPhase ~= "trash" then
+                    mansionGoSpot()
+                end
                 task.wait(0.05)
             end
             task.wait(0.03)
@@ -5914,10 +6139,11 @@ end)
 
 -- UI
 UI.RaidFarm:AddDropdown("RaidMode", {
-    Values = { "Zombie", "Makima" },
+    Values = { "Zombie", "Makima", "Mansion" },
     Default = 1,
     Multi = false,
     Text = "Raid Type",
+    Tooltip = "Zombie/Mansion: vote+ready. Makima: farm only.",
     Callback = function(v)
         if type(v) == "table" then
             for k, on in pairs(v) do
@@ -5927,23 +6153,29 @@ UI.RaidFarm:AddDropdown("RaidMode", {
         elseif type(v) == "string" then
             raidMode = v
         end
-        if raidMode ~= "Makima" then raidMode = "Zombie" end
-        notify("RaidMode", raidMode)
+        if raidMode ~= "Makima" and raidMode ~= "Mansion" then raidMode = "Zombie" end
+        if raidMode == "Makima" then
+            autoReadyUp = false
+            autoVoteDiff = false
+        elseif raidMode == "Mansion" or raidMode == "Zombie" then
+            autoReadyUp = true
+            autoVoteDiff = true
+        end
     end,
 })
 
-UI.RaidFarm:AddLabel("Zombie fixed targets:")
+
 for _, name in ipairs(ZOMBIE_RAID_DISPLAY) do
     UI.RaidFarm:AddLabel("• " .. name)
 end
-UI.RaidFarm:AddLabel("Zombie R1-4: Crawler > Tank > Zombie")
-UI.RaidFarm:AddLabel("Zombie R5: Zombie Devil only")
-UI.RaidFarm:AddLabel("Makima fixed targets:")
+
+
+
 for _, name in ipairs(MAKIMA_RAID_DISPLAY) do
     UI.RaidFarm:AddLabel("• " .. name)
 end
-UI.RaidFarm:AddLabel("Makima order:")
-UI.RaidFarm:AddLabel("Longsword User > Fake Makima > Makima")
+
+
 
 local function pressKeyT()
     pcall(function()
@@ -5960,6 +6192,7 @@ UI.RaidFarm:AddDropdown("RaidDifficulty", {
     Default = 1,
     Multi = false,
     Text = "Zombie difficulty",
+    Tooltip = "Normal / Hard / Insane — used when Raid Farm is on (Zombie only)",
     Callback = function(v)
         if type(v) == "table" then
             for k, on in pairs(v) do
@@ -5980,63 +6213,35 @@ UI.RaidFarm:AddDropdown("RaidDifficulty", {
         end
     end,
 })
-UI.RaidFarm:AddLabel("Zombie only · Makima has no difficulty")
-UI.RaidFarm:AddToggle("AutoReadyUp", {
-    Text = "Auto Ready Up (raid end)",
-    Default = true,
-    Callback = function(v)
-        autoReadyUp = v
-        notify("ReadyUp", v and "ON" or "OFF")
-    end,
-})
-UI.RaidFarm:AddToggle("AutoVoteDiff", {
-    Text = "Auto Vote Difficulty",
-    Default = false,
-    Callback = function(v)
-        autoVoteDiff = v
-        notify("Vote", v and ("ON " .. tostring(raidDifficulty)) or "OFF")
-    end,
-})
-UI.RaidFarm:AddButton({
-    Text = "Vote Now (selected difficulty)",
-    Func = function()
-        task.spawn(function()
-            local ok = voteRaidDifficulty(raidDifficulty)
-            notify("Vote", ok and ("OK " .. tostring(raidDifficulty)) or "UI not found")
-        end)
-    end,
-})
-UI.RaidFarm:AddButton({
-    Text = "Ready Up Now",
-    Func = function()
-        task.spawn(function()
-            local ok = doRaidReadyUp()
-            notify("Ready", ok and "OK" or "RaidMenuEnd not open")
-        end)
-    end,
-})
+
 
 UI.RaidFarm:AddToggle("RaidFarm", {
     Text = "Raid Farm",
     Default = false,
+    Tooltip = "Farm raid mobs. Zombie: auto difficulty vote + ready after wave end. Makima: farm only.",
     Callback = function(v)
         raidFarmOn = v
         if v then
-            -- one T press on enable (tool / mode)
             task.defer(pressKeyT)
+            if raidMode == "Makima" then
+                autoReadyUp = false
+                autoVoteDiff = false
+            else
+                autoReadyUp = true
+                autoVoteDiff = true
+                mansionReset()
+                task.spawn(function()
+                    voteRaidDifficulty(raidDifficulty)
+                end)
+            end
         end
-        notify("RaidFarm", v and "ON" or "OFF")
     end,
 })
 
 
 
 
-local function raidHuntText()
-    return "Hunt: Behind only (" .. tostring(atkBehind) .. " studs)"
-end
-
-local raidHuntLabel = UI.RaidFarm:AddLabel(raidHuntText())
+)
 
 -- Behind-only for raid as well
 huntModes = { "Behind" }
@@ -6056,7 +6261,7 @@ UI.RaidFarm:AddSlider("RaidAtkBehind", {
         end)
     end,
 })
-UI.RaidFarm:AddLabel("Behind-only · no hover · no air-heal")
+
 
 
 
@@ -6112,15 +6317,13 @@ end)
 
 UI.Specter:AddToggle("SpecterFarm", {
     Text = "Specter Farm (night)",
+    Tooltip = "Farm specter mobs using same path as auto-farm",
     Default = false,
     Callback = function(v)
         specterFarmOn = v
         notify("SpecterFarm", v and "ON" or "OFF")
     end,
 })
-UI.Specter:AddLabel("specter / specterN in Living")
-UI.Specter:AddLabel("Same farmOne path as Auto Farm")
-UI.Specter:AddLabel("Works at night event")
 
 ----------------------------------------------------------------
 -- All Fiend Farm: any *Fiend*, nearest first, same farmOne path
@@ -6170,14 +6373,13 @@ end)
 UI.AllFarm = Tabs.Farm:AddLeftGroupbox("All Fiend")
 UI.AllFarm:AddToggle("AllFiendFarm", {
     Text = "All Fiend Farm",
+    Tooltip = "Nearest Fiend-name mob, same attack path",
     Default = false,
     Callback = function(v)
         allFiendFarmOn = v
         notify("AllFiendFarm", v and "ON" or "OFF")
     end,
 })
-UI.AllFarm:AddLabel("All *Fiend* names · nearest first")
-UI.AllFarm:AddLabel("Same behind + speed cap as Auto Farm")
 
 ----------------------------------------------------------------
 -- Specter ESP
@@ -6274,7 +6476,6 @@ SpecterESPGroup:AddToggle("SpecterESP", {
         notify("SpecterESP", v and "ON" or "OFF")
     end,
 })
-SpecterESPGroup:AddLabel("Purple outline · night specters")
 
 
 -- Autoload AFTER all toggles exist (RaidFarm / MobFarm / etc.)
@@ -6292,4 +6493,125 @@ task.defer(function()
     end
 end)
 
-print("[CMDH] mob farm + stun + aimbot + keybinds")
+pcall(function()
+    if Library and Library.Notify then
+        Library:Notify({ Title = "CMDH Hub", Description = "Loaded", Time = 4 })
+    end
+end)
+
+----------------------------------------------------------------
+-- Join player server (username, not display name)
+----------------------------------------------------------------
+do
+    local JoinBox = Tabs.Server:AddRightGroupbox("Join Player")
+    local joinName = ""
+    local function resolveUserId(username)
+        username = tostring(username or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if username == "" then return nil, "empty" end
+        -- exact username
+        local ok, id = pcall(function()
+            return Players:GetUserIdFromNameAsync(username)
+        end)
+        if ok and type(id) == "number" then return id end
+        -- users API
+        local req = (syn and syn.request) or http_request or request
+        if req then
+            local body = HttpService:JSONEncode({ usernames = { username }, excludeBannedUsers = true })
+            local ok2, res = pcall(function()
+                return req({
+                    Url = "https://users.roblox.com/v1/usernames/users",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = body,
+                })
+            end)
+            if ok2 and res and (res.Body or res.body) then
+                local ok3, data = pcall(function()
+                    return HttpService:JSONDecode(res.Body or res.body)
+                end)
+                if ok3 and data and data.data and data.data[1] then
+                    return data.data[1].id
+                end
+            end
+        end
+        return nil, "user not found"
+    end
+
+    local function joinUserServer(username)
+        local userId, err = resolveUserId(username)
+        if not userId then return false, err or "fail" end
+        -- presence (executor cookie if available)
+        local req = (syn and syn.request) or http_request or request
+        local jobId, place = nil, PlaceId
+        if req then
+            local ok, res = pcall(function()
+                return req({
+                    Url = "https://presence.roblox.com/v1/presence/users",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({ userIds = { userId } }),
+                })
+            end)
+            if ok and res and (res.Body or res.body) then
+                local ok2, data = pcall(function()
+                    return HttpService:JSONDecode(res.Body or res.body)
+                end)
+                if ok2 and data and data.userPresences and data.userPresences[1] then
+                    local pr = data.userPresences[1]
+                    jobId = pr.gameId or pr.GameId
+                    place = pr.placeId or pr.PlaceId or PlaceId
+                end
+            end
+        end
+        if jobId and jobId ~= "" then
+            local ok3 = pcall(function()
+                TeleportService:TeleportToPlaceInstance(place, jobId, Player)
+            end)
+            return ok3, ok3 and "teleporting" or "teleport failed"
+        end
+        -- fallback: GetPlayerPlaceInstanceAsync if exists
+        local ok4, p1, j1 = pcall(function()
+            return TeleportService:GetPlayerPlaceInstanceAsync(userId)
+        end)
+        if ok4 and j1 then
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(p1 or PlaceId, j1, Player)
+            end)
+            return true, "teleporting"
+        end
+        return false, "player offline or presence blocked"
+    end
+
+    JoinBox:AddInput("JoinUsername", {
+        Default = "",
+        Numeric = false,
+        Finished = true,
+        Text = "Username",
+        Tooltip = "Roblox username (not display name)",
+        Placeholder = "ExactUsername",
+        Callback = function(v)
+            joinName = tostring(v or "")
+        end,
+    })
+    JoinBox:AddButton({
+        Text = "Join Server",
+        Tooltip = "Teleport to that user's current server",
+        Func = function()
+            task.spawn(function()
+                local ok, msg = joinUserServer(joinName)
+                pcall(function()
+                    if Library and Library.Notify then
+                        Library:Notify({
+                            Title = "Join",
+                            Description = ok and "OK" or tostring(msg),
+                            Time = 3,
+                        })
+                    end
+                end)
+            end)
+        end,
+    })
+end
+
+
+print("[CMDH] loaded")
