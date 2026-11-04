@@ -3614,6 +3614,8 @@ local function fetchLib(path)
     local urls = {
         REPO .. path,
         REPO_FALLBACK .. path,
+        "https://cdn.jsdelivr.net/gh/violin-suzutsuki/LinoriaLib@main/" .. path,
+        "https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/master/" .. path,
     }
     for _, url in ipairs(urls) do
         local okGet, body = pcall(function()
@@ -3647,7 +3649,25 @@ do
 end
 if type(Library) ~= "table" and type(Library) ~= "userdata" then
     pcall(function() warn("[CMDH] Linoria Library failed to load") end)
-    pcall(function() print("[CMDH] STOP: Library nil — check HttpGet") end)
+    pcall(function() print("[CMDH] STOP: Library nil — check HttpGet / allowlist") end)
+    pcall(function()
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "CMDH_Fallback"
+        sg.ResetOnSpawn = false
+        pcall(function() sg.Parent = game:GetService("CoreGui") end)
+        if not sg.Parent and Player then
+            sg.Parent = Player:FindFirstChild("PlayerGui") or Player:WaitForChild("PlayerGui", 5)
+        end
+        local tl = Instance.new("TextLabel")
+        tl.Size = UDim2.new(0, 460, 0, 70)
+        tl.Position = UDim2.new(0.5, -230, 0.12, 0)
+        tl.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        tl.TextColor3 = Color3.fromRGB(255, 90, 90)
+        tl.Font = Enum.Font.Code
+        tl.TextSize = 16
+        tl.Text = "CMDH: Library load FAILED\nHttpGet blocked? See F9"
+        tl.Parent = sg
+    end)
     return
 end
 
@@ -3677,15 +3697,52 @@ do
     end)
     if not ok or not win then
         warn("[CMDH] CreateWindow failed: " .. tostring(win))
+        -- fallback banner so user knows script ran
+        pcall(function()
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "CMDH_Fallback"
+            sg.ResetOnSpawn = false
+            pcall(function() sg.Parent = game:GetService("CoreGui") end)
+            if not sg.Parent then
+                sg.Parent = Player:WaitForChild("PlayerGui")
+            end
+            local tl = Instance.new("TextLabel")
+            tl.Size = UDim2.new(0, 420, 0, 60)
+            tl.Position = UDim2.new(0.5, -210, 0.1, 0)
+            tl.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+            tl.TextColor3 = Color3.fromRGB(255, 80, 80)
+            tl.Text = "CMDH: Linoria CreateWindow failed — check F9"
+            tl.Parent = sg
+        end)
         return
     end
     Window = win
-    pcall(function()
-        if Window.SetVisible then Window:SetVisible(true) end
-    end)
-    pcall(function()
-        Library.ToggleKeybind = Enum.KeyCode.RightShift
-    end)
+    pcall(function() Library.ToggleKeybind = Enum.KeyCode.RightShift end)
+    local function forceShow()
+        pcall(function()
+            if Window.SetVisible then Window:SetVisible(true) end
+        end)
+        pcall(function()
+            if Library.Toggled ~= nil then Library.Toggled = true end
+        end)
+        pcall(function()
+            if type(Library.Toggle) == "function" then
+                -- only toggle if currently hidden
+                if Library.Toggled == false then Library:Toggle() end
+            end
+        end)
+        pcall(function()
+            if Library.UnbindKey and Library.BindKey then
+                -- leave keybind
+            end
+        end)
+    end
+    forceShow()
+    task.defer(forceShow)
+    task.delay(0.5, forceShow)
+    task.delay(1.5, forceShow)
+    getgenv().CMDH_ForceShow = forceShow
+    print("[CMDH] Window created — RightShift toggles UI")
 end
 
 local Tabs = {
