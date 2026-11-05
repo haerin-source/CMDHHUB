@@ -4792,11 +4792,14 @@ local function tryReadyUp()
     return robustClick(targetButton)
 end
 
--- Ready Up only: (1) after death + 15s  (2) when Wave 5 raid ends
+-- ============================================================
+-- Ready Up (die): death → 15s → Ready Up
+-- Ready Up (You Completed): Wave:5 seen + "raid completed"/"레이드 완료" → Ready Up
+-- ============================================================
 local lastDeathAt = 0
 local deathReadyQueued = false
-local wave5Seen = false
-local wave5EndedReady = false
+local isWave5Reached = false
+local completedReadyCooldownUntil = 0
 
 local function setupDeathForReady(character)
     if not character then return end
@@ -4805,7 +4808,6 @@ local function setupDeathForReady(character)
     humanoid.Died:Connect(function()
         lastDeathAt = tick()
         deathReadyQueued = true
-        -- death weapon re-equip removed by request
     end)
 end
 if Player.Character then task.spawn(setupDeathForReady, Player.Character) end
@@ -4815,52 +4817,107 @@ Player.CharacterAdded:Connect(function(c)
     setupDeathForReady(c)
 end)
 
+local function getRaidHintText()
+    local tx = ""
+    pcall(function()
+        local pg = Player:FindFirstChild("PlayerGui")
+        if not pg then return end
+        local guis = pg:FindFirstChild("guis")
+        local hint = guis and guis:FindFirstChild("RaidHint")
+        if not hint then hint = pg:FindFirstChild("RaidHint", true) end
+        if hint then tx = tostring(hint.Text or "") end
+    end)
+    return tx
+end
+
+local function findActiveSuccessGui(parent)
+    if not parent then return nil end
+    local ok, children = pcall(function() return parent:GetChildren() end)
+    if not ok or not children then return nil end
+    for _, child in ipairs(children) do
+        if child:IsA("TextLabel") or child:IsA("TextButton") then
+            local text, vis, transp = "", false, 1
+            pcall(function()
+                text = string.lower(tostring(child.Text or ""))
+                vis = child.Visible
+                transp = child.TextTransparency or 0
+            end)
+            if vis and transp < 1 then
+                if text:find("레이드 완료", 1, true)
+                    or text:find("raid completed", 1, true)
+                    or text:find("you completed", 1, true)
+                    or text:find("raid complete", 1, true)
+                then
+                    return child
+                end
+            end
+        end
+        local found = findActiveSuccessGui(child)
+        if found then return found end
+    end
+    return nil
+end
+
+-- Track Wave: 5 on RaidHint
 task.spawn(function()
     while not unloaded do
         if autoReadyUp and raidMode ~= "Makima" then
-            -- death → wait 15s → ready
+            local tx = getRaidHintText()
+            if tx:match("Wave:%s*5") or tx:match("[Ww]ave%s*5") then
+                isWave5Reached = true
+            end
+            -- reset if a new run starts at wave 1
+            if tx:match("Wave:%s*1") or tx:match("[Ww]ave%s*1") then
+                -- only clear if we already finished a prior completed click
+                if tick() > completedReadyCooldownUntil then
+                    -- keep isWave5Reached until completed fires; wave1 after cooldown resets
+                    if not isWave5Reached then
+                        -- already false
+                    end
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- Ready Up (die)
+task.spawn(function()
+    while not unloaded do
+        if autoReadyUp and raidMode ~= "Makima" then
             if deathReadyQueued and (tick() - lastDeathAt) >= 15 then
                 if tryReadyUp() then
                     deathReadyQueued = false
                     task.wait(1.0)
                 end
             end
-            -- wave 5 detect via RaidHint, then when hint leaves wave5 / shows end → ready
-            local tx = ""
-            pcall(function()
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- Ready Up (You Completed) — Zombie + Mention after final boss
+task.spawn(function()
+    while not unloaded do
+        if autoReadyUp and raidMode ~= "Makima" and isWave5Reached then
+            if tick() >= completedReadyCooldownUntil then
                 local pg = Player:FindFirstChild("PlayerGui")
-                local hint = pg and pg:FindFirstChild("guis") and pg.guis:FindFirstChild("RaidHint")
-                if hint then tx = tostring(hint.Text or "") end
-                if tx == "" then
-                    local h = pg and pg:FindFirstChild("RaidHint", true)
-                    if h then tx = tostring(h.Text or "") end
-                end
-            end)
-            if tx:match("Wave:%s*5") or tx:match("[Ww]ave%s*5") then
-                wave5Seen = true
-                wave5EndedReady = false
-            elseif wave5Seen and tx ~= "" and not (tx:match("Wave:%s*5") or tx:match("[Ww]ave%s*5")) then
-                -- left wave 5 text — raid end / results
-                if not wave5EndedReady then
-                    if tryReadyUp() then
-                        wave5EndedReady = true
-                        wave5Seen = false
-                        task.wait(1.0)
+                if pg then
+                    local successLabel = findActiveSuccessGui(pg)
+                    if successLabel then
+                        local targetButton = findReadyUpButton(pg)
+                        if targetButton then
+                            local vis = true
+                            pcall(function() vis = targetButton.Visible end)
+                            if vis then
+                                if fireReadyConnections(targetButton) or robustClick(targetButton) then
+                                    isWave5Reached = false
+                                    completedReadyCooldownUntil = tick() + 10
+                                    task.wait(1.0)
+                                end
+                            end
+                        end
                     end
-                end
-            end
-            -- also click if Ready UI is already visible after wave5Seen
-            if wave5Seen then
-                local pg = Player:FindFirstChild("PlayerGui")
-                local readyVisible = false
-                pcall(function()
-                    local raidMenu = pg and (pg:FindFirstChild("RaidMenu") or pg:FindFirstChild("RaidMenuEnd", true))
-                    if raidMenu then readyVisible = true end
-                end)
-                if readyVisible and tryReadyUp() then
-                    wave5EndedReady = true
-                    wave5Seen = false
-                    task.wait(1.0)
                 end
             end
         end
