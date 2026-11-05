@@ -4412,28 +4412,25 @@ local HYBRID = { "ResetMyHybridPLOX", "RemoveMyHybridTHX", "HybridReset2025" }
 local FIEND = { "FiendReset2025", "80KFiendReset" }
 local function redeemCode(c)
     local ok, res = pcall(function()
-        local events = ReplicatedStorage:FindFirstChild("events") or game:GetService("ReplicatedStorage"):WaitForChild("events", 3)
-        local rf = events and events:FindFirstChild("InsertCode")
-        if not rf then
-            rf = events and events:WaitForChild("InsertCode", 2)
+        local events = game:GetService("ReplicatedStorage"):FindFirstChild("events")
+        if not events then
+            events = game:GetService("ReplicatedStorage"):WaitForChild("events", 5)
         end
-        if rf and rf:IsA("RemoteFunction") then
+        local rf = events and (events:FindFirstChild("InsertCode") or events:WaitForChild("InsertCode", 5))
+        if not rf then error("InsertCode missing") end
+        if rf:IsA("RemoteFunction") then
             return rf:InvokeServer(c)
         end
-        if rf and rf:IsA("RemoteEvent") then
+        if rf:IsA("RemoteEvent") then
             rf:FireServer(c)
             return "fired"
         end
-        error("InsertCode remote missing")
+        error("InsertCode bad type")
     end)
     if ok then
-        notify("Codes", tostring(c) .. " → " .. tostring(res))
+        notify("Codes", tostring(c) .. " ok")
     else
-        notify("Codes", "fail " .. tostring(c))
-        -- fallback clipboard
-        pcall(function()
-            if setclipboard then setclipboard(c) elseif toclipboard then toclipboard(c) end
-        end)
+        notify("Codes", "fail: " .. tostring(c))
     end
 end
 local function copyCode(c)
@@ -4735,31 +4732,64 @@ task.spawn(function()
 end)
 
 -- Ready Up after raid end (Zombie / Mention only — not Makima)
+local function findReadyUpButton(parent)
+    if not parent then return nil end
+    local ok, children = pcall(function() return parent:GetChildren() end)
+    if not ok or not children then return nil end
+    for _, child in ipairs(children) do
+        local isBtn = child:IsA("TextButton") or child:IsA("TextLabel")
+        if isBtn then
+            local tx = ""
+            pcall(function() tx = tostring(child.Text or "") end)
+            if tx:find("Ready Up", 1, true) or tx:find("ReadyUp", 1, true) then
+                if child:IsA("TextLabel") and child.Parent and child.Parent:IsA("TextButton") then
+                    return child.Parent
+                end
+                if child:IsA("TextButton") then return child end
+                if child.Parent and child.Parent:IsA("TextButton") then return child.Parent end
+            end
+        end
+        local found = findReadyUpButton(child)
+        if found then return found end
+    end
+    return nil
+end
+
+local function fireReadyConnections(btn)
+    if not btn or not btn:IsA("GuiButton") then return false end
+    local ok = false
+    pcall(function()
+        if typeof(getconnections) ~= "function" then return end
+        for _, sig in ipairs({ "MouseButton1Click", "Activated", "MouseButton1Down" }) do
+            local ev = btn[sig]
+            if ev then
+                for _, c in ipairs(getconnections(ev)) do
+                    pcall(function()
+                        if c.Fire then c:Fire() elseif c.Function then c.Function() end
+                    end)
+                    ok = true
+                end
+            end
+        end
+    end)
+    return ok
+end
+
 local function tryReadyUp()
     if not autoReadyUp then return false end
     if raidMode == "Makima" then return false end
     local pg = Player:FindFirstChild("PlayerGui")
     if not pg then return false end
-    local targetButton = nil
-    pcall(function()
-        local t = pg:FindFirstChild("text", true)
-        if t and t.Parent and t.Parent.Name == "Ready" and t:IsA("TextButton") then
-            targetButton = t
-        end
-    end)
-    if not targetButton then
-        pcall(function()
-            local raidMenu = pg:FindFirstChild("RaidMenu") or pg:FindFirstChild("RaidMenuEnd", true)
-            local endFolder = raidMenu and (raidMenu:FindFirstChild("End") or raidMenu)
-            local readyFolder = endFolder and endFolder:FindFirstChild("Ready", true)
-            targetButton = readyFolder and readyFolder:FindFirstChild("text")
-        end)
-    end
-    if targetButton and targetButton:IsA("TextButton") then
-        robustClick(targetButton)
+    local targetButton = findReadyUpButton(pg)
+    if not targetButton then return false end
+    local vis = true
+    pcall(function() vis = targetButton.Visible end)
+    if not vis then return false end
+    if fireReadyConnections(targetButton) then
         return true
     end
-    return false
+    -- fallback robustClick (connections may be empty)
+    return robustClick(targetButton)
 end
 
 -- Ready Up only: (1) after death + 15s  (2) when Wave 5 raid ends
@@ -4912,26 +4942,21 @@ local MOVE_SPEED = 40 -- hard lock
 ----------------------------------------------------------------
 -- Spider climb (farm / raid approach walls)
 ----------------------------------------------------------------
-local spiderOn = true
+-- spider only while approachMob/farmOne is running (not normal walk)
+local spiderActive = false
 local SPIDER_SPEED = 20
 local RAY_LENGTH = 3
 RunService.Stepped:Connect(function()
-    if unloaded or not spiderOn then return end
-    -- only while any farm active
+    if unloaded or not spiderActive then return end
     if not (farmToggle or raidFarmOn or specterFarmOn or allFiendFarmOn) then return end
     pcall(function()
         local char = Player.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not hrp or not hum then return end
-        if hum.MoveDirection.Magnitude <= 0 and (hrp.AssemblyLinearVelocity.Magnitude < 1) then
-            -- still allow while cframe-flying toward mob: check look dir
-        end
+        if not hrp then return end
         local params = RaycastParams.new()
         params.FilterDescendantsInstances = { char }
         params.FilterType = Enum.RaycastFilterType.Exclude
-        local dir = hrp.CFrame.LookVector * RAY_LENGTH
-        local hit = workspace:Raycast(hrp.Position, dir, params)
+        local hit = workspace:Raycast(hrp.Position, hrp.CFrame.LookVector * RAY_LENGTH, params)
         if hit then
             hrp.AssemblyLinearVelocity = Vector3.new(
                 hrp.AssemblyLinearVelocity.X,
@@ -5239,6 +5264,7 @@ local function farmOne(model)
     local function farmGate()
         return farmToggle or raidFarmOn or specterFarmOn or allFiendFarmOn
     end
+    spiderActive = true
     while farmGate() and hum.Parent and hum.Health > 0 do
         if not farmGate() then break end
         if not isMobOnGround(hrp) then break end
@@ -5259,6 +5285,7 @@ local function farmOne(model)
         doAttack()
         task.wait(0.05)
     end
+    spiderActive = false
 end
 
 local function pickPriorityTarget()
@@ -6054,7 +6081,7 @@ UI.RaidFarm:AddDropdown("RaidDifficulty", {
     Values = { "Normal", "Hard", "Insane" },
     Default = 1,
     Multi = false,
-    Text = "Zombie difficulty",
+    Text = "Difficulty (not Makima)",
     Callback = function(v)
         if type(v) == "table" then
             for k, on in pairs(v) do
@@ -6072,7 +6099,7 @@ UI.RaidFarm:AddDropdown("RaidDifficulty", {
         end
     end,
 })
-UI.RaidFarm:AddLabel("Zombie / Mention only · Makima skips diff+ready")
+UI.RaidFarm:AddLabel("Difficulty + Ready: all except Makima")
 UI.RaidFarm:AddToggle("AutoDiffVote", {
     Text = "Auto Difficulty Vote",
     Default = true,
