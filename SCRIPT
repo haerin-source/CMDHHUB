@@ -4912,7 +4912,7 @@ task.spawn(function()
                             if vis then
                                 if fireReadyConnections(targetButton) or robustClick(targetButton) then
                                     isWave5Reached = false
-                                    completedReadyCooldownUntil = tick() + 10
+                                    completedReadyCooldownUntil = tick() + 0.5
                                     task.wait(1.0)
                                 end
                             end
