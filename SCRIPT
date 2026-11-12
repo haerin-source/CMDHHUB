@@ -5234,7 +5234,7 @@ local function attackOffsetPos(targetRoot)
     return Vector3.new(behind.X, lockY, behind.Z)
 end
 
--- Early-style R5 Zombie Devil: step behind + face, no long lerp (no map-end overshoot)
+-- R5 Zombie Devil: stick behind + face (snap when close, no map-end Y)
 local function approachDevil(targetRoot)
     local hrp = select(1, getHRP())
     if not hrp or not targetRoot then return end
@@ -5247,37 +5247,41 @@ local function approachDevil(targetRoot)
     else
         behind = pos - Vector3.new(0, 0, atkBehind or 4)
     end
-    -- keep same height band as devil (slightly below chest), not map-edge Y
     behind = Vector3.new(behind.X, pos.Y, behind.Z)
-    local to = behind - hrp.Position
-    local dist = to.Magnitude
-    local step = math.min(dist, math.max(MOVE_SPEED * 0.04, 2))
-    local newPos = hrp.Position
-    if dist > 2.5 then
-        newPos = hrp.Position + to.Unit * step
-    else
+    local dist = (behind - hrp.Position).Magnitude
+    local newPos
+    if dist <= 10 then
+        -- close: hard stick behind (original feel)
         newPos = behind
+    else
+        -- approach in larger chunks (was too slow/steppy)
+        local step = math.min(dist, math.max(MOVE_SPEED * 0.15, 6))
+        newPos = hrp.Position + (behind - hrp.Position).Unit * step
+        newPos = Vector3.new(newPos.X, pos.Y, newPos.Z)
     end
     pcall(function()
         hrp.AssemblyLinearVelocity = Vector3.zero
-        -- face the devil body
-        if (pos - newPos).Magnitude > 0.1 then
-            hrp.CFrame = CFrame.lookAt(newPos, pos)
-        else
-            hrp.CFrame = CFrame.new(newPos)
-        end
+        hrp.CFrame = CFrame.lookAt(newPos, pos)
     end)
 end
 
 local function approachMob(targetRoot)
     if not targetRoot then return end
-    if not isMobOnGround(targetRoot) then return end
+    -- Devil first — never blocked by ground filter
     if isZombieDevil(targetRoot) then
         approachDevil(targetRoot)
         return
     end
+    -- Mention rooftop: still approach even if "airborne" ray fails
+    if raidMode ~= "Mention" and not isMobOnGround(targetRoot) then
+        return
+    end
     local dest = attackOffsetPos(targetRoot)
-    if not dest then return end
+    if not dest then
+        -- fallback: behind at mob height
+        local pos = targetRoot.Position
+        dest = Vector3.new(pos.X, pos.Y, pos.Z - (atkBehind or 4))
+    end
     local lookTarget = Vector3.new(targetRoot.Position.X, dest.Y, targetRoot.Position.Z)
     cframeFlyTo(dest, lookTarget, false)
 end
@@ -5358,7 +5362,7 @@ local function farmOne(model)
     spiderActive = true
     while farmGate() and hum.Parent and hum.Health > 0 do
         if not farmGate() then break end
-        if not isMobOnGround(hrp) then break end
+        -- do NOT break on ground flicker — that caused kill-pause-kill stutter
         approachMob(hrp)
         -- OFF during approach → leave immediately, no face/attack/snap
         if not farmGate() then break end
@@ -6093,18 +6097,24 @@ task.spawn(function()
         else
             MOVE_SPEED = 40
             if raidMode == "Mention" and mentionPhase ~= "wave" then
-                -- stand on mention spot while waiting/fighting neon/guy
+                -- walk/fly slowly to neon spot (no instant TP — less ban-looking)
                 local hrp = select(1, getHRP())
                 if hrp then
                     local dest = MENTION_SPOT.Position
                     local d = (hrp.Position - dest).Magnitude
-                    if d > 6 then
+                    if d > 8 then
+                        local saved = MOVE_SPEED
+                        MOVE_SPEED = 18 -- slow approach to neon pad
+                        cframeFlyTo(dest, dest, false)
+                        MOVE_SPEED = saved
+                    elseif d > 2 then
                         pcall(function()
                             hrp.AssemblyLinearVelocity = Vector3.zero
-                            hrp.CFrame = CFrame.new(dest) * (MENTION_SPOT - MENTION_SPOT.Position)
+                            hrp.CFrame = CFrame.lookAt(
+                                Vector3.new(hrp.Position.X, dest.Y, hrp.Position.Z):Lerp(dest, 0.35),
+                                dest
+                            )
                         end)
-                        -- safer: full CFrame
-                        pcall(function() hrp.CFrame = MENTION_SPOT end)
                     end
                 end
             end
@@ -6113,6 +6123,7 @@ task.spawn(function()
                 local hum = target:FindFirstChildOfClass("Humanoid")
                 local hpBefore = hum and hum.Health or 0
                 farmOne(target)
+                task.wait(0.02) -- tight retarget
                 -- count wave kills for Mention
                 if raidMode == "Mention" and mentionPhase == "wave" and hum then
                     if not hum.Parent or hum.Health <= 0 or hum.Health < hpBefore then
