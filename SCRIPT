@@ -4732,6 +4732,17 @@ task.spawn(function()
 end)
 
 -- Ready Up after raid end (Zombie / Mention only — not Makima)
+local function isReadyUpText(tx)
+    tx = tostring(tx or "")
+    local low = string.lower(tx)
+    -- EN
+    if low:find("ready up", 1, true) or low:find("readyup", 1, true) then return true end
+    -- KR (screenshot: 준비 완료)
+    if tx:find("준비 완료", 1, true) or tx:find("준비완료", 1, true) then return true end
+    if low:find("junbi") then return true end -- rare romanization
+    return false
+end
+
 local function findReadyUpButton(parent)
     if not parent then return nil end
     local ok, children = pcall(function() return parent:GetChildren() end)
@@ -4741,7 +4752,8 @@ local function findReadyUpButton(parent)
         if isBtn then
             local tx = ""
             pcall(function() tx = tostring(child.Text or "") end)
-            if tx:find("Ready Up", 1, true) or tx:find("ReadyUp", 1, true) then
+            if isReadyUpText(tx) then
+                -- never click "Main Game" / "메인 게임"
                 if child:IsA("TextLabel") and child.Parent and child.Parent:IsA("TextButton") then
                     return child.Parent
                 end
@@ -4853,7 +4865,15 @@ task.spawn(function()
                 raidProgressSeen = true
             end
             if tx:match("Wave:%s*%d") or low:find("fiend") or low:find("neon")
-                or low:find("sideburn") or low:find("hunter") or low:find("defeat") then
+                or low:find("sideburn") or low:find("hunter") or low:find("defeat")
+                or tx:find("악마", 1, true) or tx:find("처치", 1, true)
+                or low:find("raid completed") or tx:find("레이드 완료", 1, true)
+                or low:find("ready up") or tx:find("준비 완료", 1, true) then
+                raidProgressSeen = true
+            end
+            -- completion screen alone is enough to arm Ready
+            if low:find("raid completed") or tx:find("레이드 완료", 1, true) then
+                isWave5Reached = true
                 raidProgressSeen = true
             end
             if tx:match("Wave:%s*1[^0-9]") or tx:match("Wave:%s*1$") then
@@ -4921,7 +4941,7 @@ task.spawn(function()
                         tx = tostring(inst.Text or "")
                     end
                 end)
-                if tx:find("Ready Up", 1, true) or tx:find("ReadyUp", 1, true) then
+                if isReadyUpText(tx) then
                     if burstReadyUp(6) then
                         isWave5Reached = false
                         raidProgressSeen = false
@@ -5195,7 +5215,8 @@ end
 
 local function attackOffsetPos(targetRoot)
     if not targetRoot then return nil end
-    if not isMobOnGround(targetRoot) then return nil end
+    -- Mention / rooftop: allow off-ground; Zombie still ground-filtered except Devil
+    if raidMode ~= "Mention" and not isMobOnGround(targetRoot) then return nil end
     if isZombieDevil(targetRoot) then return nil end -- devil uses its own approach
     local hrp = select(1, getHRP())
     if not hrp then return nil end
@@ -6023,15 +6044,20 @@ local function raidPickTarget()
             -- wait at spot for neon/guy
             return nil
         end
-        -- wave: nearest matching fiend
+        -- wave: nearest matching fiend (rooftop OK for Mention — no ground filter)
         local best, bestD = nil, math.huge
         for _, m in ipairs(living:GetChildren()) do
             if not isPlayerChar(m) and isMentionWaveName(m.Name) then
                 local hum = m:FindFirstChildOfClass("Humanoid")
                 local root = m:FindFirstChild("HumanoidRootPart")
-                if hum and root and hum.Health > 0 and isMobOnGround(root) then
+                if hum and root and hum.Health > 0 then
+                    -- soft height: prefer closer; still take high rooftop targets
                     local d = my and (my.Position - root.Position).Magnitude or 0
-                    if d < bestD then best, bestD = m, d end
+                    -- small penalty for very high targets so nearest ground first, then roof
+                    local dy = 0
+                    if my then dy = math.abs(root.Position.Y - my.Position.Y) end
+                    local score = d + dy * 0.15
+                    if score < bestD then best, bestD = m, score end
                 end
             end
         end
