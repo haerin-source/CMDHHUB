@@ -4901,28 +4901,59 @@ task.spawn(function()
     end
 end)
 
--- Ready Up (You Completed) — button-only, works alt-tabbed
--- After raid progress: if Ready Up exists in PlayerGui → burst Fire (ignore Visible)
+-- Ready Up (You Completed): press → wait 3s → if still on results / Ready still there → press again
 task.spawn(function()
     while not unloaded do
         if autoReadyUp and raidMode ~= "Makima" then
-            if tick() >= completedReadyCooldownUntil then
-                local armed = isWave5Reached or raidProgressSeen
-                if armed then
-                    local pg = Player:FindFirstChild("PlayerGui")
-                    local btn = pg and findReadyUpButton(pg)
-                    if btn then
-                        if burstReadyUp(6) then
-                            isWave5Reached = false
-                            raidProgressSeen = false
-                            completedReadyCooldownUntil = tick() + 0.5
-                            task.wait(0.5)
+            local pg = Player:FindFirstChild("PlayerGui")
+            local btn = pg and findReadyUpButton(pg)
+            -- also arm if completion text is on screen
+            local armed = isWave5Reached or raidProgressSeen
+            if not armed and pg then
+                local ok, has = pcall(function()
+                    for _, d in ipairs(pg:GetDescendants()) do
+                        if d:IsA("TextLabel") or d:IsA("TextButton") then
+                            local t = string.lower(tostring(d.Text or ""))
+                            if t:find("raid completed", 1, true) or tostring(d.Text or ""):find("레이드 완료", 1, true) then
+                                return true
+                            end
                         end
                     end
+                    return false
+                end)
+                if ok and has then armed = true end
+            end
+            if btn and (armed or true) then
+                -- always try when Ready button exists (both Zombie + Mention)
+                burstReadyUp(5)
+                local place0 = game.PlaceId
+                local job0 = game.JobId
+                local t0 = tick()
+                local cleared = false
+                while tick() - t0 < 3 do
+                    task.wait(0.25)
+                    local pg2 = Player:FindFirstChild("PlayerGui")
+                    local still = pg2 and findReadyUpButton(pg2)
+                    if not still then
+                        cleared = true
+                        break
+                    end
+                    if game.PlaceId ~= place0 or game.JobId ~= job0 then
+                        cleared = true
+                        break
+                    end
+                end
+                if not cleared then
+                    -- still stuck on results → press again
+                    burstReadyUp(6)
+                else
+                    isWave5Reached = false
+                    raidProgressSeen = false
+                    completedReadyCooldownUntil = tick() + 0.4
                 end
             end
         end
-        task.wait(0.2)
+        task.wait(0.35)
     end
 end)
 
@@ -6104,7 +6135,7 @@ task.spawn(function()
                     local d = (hrp.Position - dest).Magnitude
                     if d > 8 then
                         local saved = MOVE_SPEED
-                        MOVE_SPEED = 18 -- slow approach to neon pad
+                        MOVE_SPEED = 35 -- neon pad approach
                         cframeFlyTo(dest, dest, false)
                         MOVE_SPEED = saved
                     elseif d > 2 then
