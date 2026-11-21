@@ -3302,6 +3302,7 @@ local function nearestLivingMob()
     return best
 end
 
+end -- close MobFarm else
   do local S=_G.CMDH_HUB_SHARED; if type(S)~="table" then S={} _G.CMDH_HUB_SHARED=S end
     pcall(function() S.Library=Library end)
     pcall(function() S.ThemeManager=ThemeManager end)
@@ -3983,19 +3984,21 @@ UI.RaidFarm:AddDropdown("RaidMode", {
 ZOMBIE_RAID_DISPLAY = ZOMBIE_RAID_DISPLAY or { "Crawler Zombie", "Tank Zombie", "Zombie", "Zombie Devil" }
 MAKIMA_RAID_DISPLAY = MAKIMA_RAID_DISPLAY or { "Longsword User", "Fake Makima", "Makima" }
 if UI.RaidFarm then
-UI.RaidFarm:AddLabel("Zombie fixed targets:")
-for _, name in ipairs(ZOMBIE_RAID_DISPLAY) do
-    UI.RaidFarm:AddLabel("• " .. name)
+    UI.RaidFarm:AddLabel("Zombie fixed targets:")
+    for _, name in ipairs(ZOMBIE_RAID_DISPLAY) do
+        UI.RaidFarm:AddLabel("• " .. name)
+    end
+    UI.RaidFarm:AddLabel("Zombie R1-4: Crawler > Tank > Zombie")
+    UI.RaidFarm:AddLabel("Zombie R5: Zombie Devil only")
+    UI.RaidFarm:AddLabel("Makima fixed targets:")
+    for _, name in ipairs(MAKIMA_RAID_DISPLAY) do
+        UI.RaidFarm:AddLabel("• " .. name)
+    end
+    UI.RaidFarm:AddLabel("Makima order:")
+    UI.RaidFarm:AddLabel("Longsword User > Fake Makima > Makima")
+    UI.RaidFarm:AddLabel("Mention wave: Fly/Mannequin/Mantis/Toxin/Wasp Fiend")
+    UI.RaidFarm:AddLabel("Raid farm runs only inside an active raid")
 end
-UI.RaidFarm:AddLabel("Zombie R1-4: Crawler > Tank > Zombie")
-UI.RaidFarm:AddLabel("Zombie R5: Zombie Devil only")
-UI.RaidFarm:AddLabel("Makima fixed targets:")
-for _, name in ipairs(MAKIMA_RAID_DISPLAY) do
-    UI.RaidFarm:AddLabel("• " .. name)
-end
-UI.RaidFarm:AddLabel("Makima order:")
-UI.RaidFarm:AddLabel("Longsword User > Fake Makima > Makima")
-UI.RaidFarm:AddLabel("Mention wave: Fly/Mannequin/Mantis/Toxin/Wasp Fiend")
 
 local function pressKeyT()
     pcall(function()
