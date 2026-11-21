@@ -4436,21 +4436,71 @@ end
 local function copyCode(c)
     redeemCode(c)
 end
+
+local redeemBusy = false
+local function redeemAllIn(list, label)
+    if redeemBusy then
+        notify("Codes", "already redeeming")
+        return
+    end
+    redeemBusy = true
+    task.spawn(function()
+        local okN, failN = 0, 0
+        notify("Codes", "Redeem all " .. label .. " (" .. #list .. ")")
+        for _, c in ipairs(list) do
+            if unloaded then break end
+            local ok = pcall(function()
+                local events = game:GetService("ReplicatedStorage"):FindFirstChild("events")
+                    or game:GetService("ReplicatedStorage"):WaitForChild("events", 5)
+                local rf = events and (events:FindFirstChild("InsertCode") or events:WaitForChild("InsertCode", 5))
+                if not rf then error("InsertCode missing") end
+                if rf:IsA("RemoteFunction") then
+                    rf:InvokeServer(c)
+                elseif rf:IsA("RemoteEvent") then
+                    rf:FireServer(c)
+                else
+                    error("bad remote")
+                end
+            end)
+            if ok then okN = okN + 1 else failN = failN + 1 end
+            task.wait(0.35)
+        end
+        redeemBusy = false
+        notify("Codes", label .. " done ok=" .. okN .. " fail=" .. failN)
+    end)
+end
+
+-- per-group "enter all" then individual codes
+UI.YenCode:AddButton({ Text = ">>> Redeem ALL Yen Codes", Func = function() redeemAllIn(YEN, "Yen") end })
 for _, c in ipairs(YEN) do UI.YenCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(EXP) do UI.ExpCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(BULLET) do UI.BulletCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(AURA) do UI.AuraCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(CONTRACT) do UI.ContractCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(SKILL) do UI.SkillCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(HYBRID) do UI.HybridCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
-for _, c in ipairs(FIEND) do UI.FiendCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.YenCode:AddLabel("Click = InsertCode remote (not clipboard)")
+
+UI.ExpCode:AddButton({ Text = ">>> Redeem ALL EXP Codes", Func = function() redeemAllIn(EXP, "EXP") end })
+for _, c in ipairs(EXP) do UI.ExpCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.ExpCode:AddLabel("Some codes may no longer redeem.")
+
+UI.BulletCode:AddButton({ Text = ">>> Redeem ALL Bullet Codes", Func = function() redeemAllIn(BULLET, "Bullet") end })
+for _, c in ipairs(BULLET) do UI.BulletCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.BulletCode:AddLabel("Some codes may no longer redeem.")
+
+UI.AuraCode:AddButton({ Text = ">>> Redeem ALL Aura Codes", Func = function() redeemAllIn(AURA, "Aura") end })
+for _, c in ipairs(AURA) do UI.AuraCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.AuraCode:AddLabel("Some codes may no longer redeem.")
+
+UI.ContractCode:AddButton({ Text = ">>> Redeem ALL Contract Codes", Func = function() redeemAllIn(CONTRACT, "Contract") end })
+for _, c in ipairs(CONTRACT) do UI.ContractCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.ContractCode:AddLabel("Some codes may no longer redeem.")
+
+UI.SkillCode:AddButton({ Text = ">>> Redeem ALL Skill Codes", Func = function() redeemAllIn(SKILL, "Skill") end })
+for _, c in ipairs(SKILL) do UI.SkillCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.SkillCode:AddLabel("Some codes may no longer redeem.")
+
+UI.HybridCode:AddButton({ Text = ">>> Redeem ALL Hybrid Codes", Func = function() redeemAllIn(HYBRID, "Hybrid") end })
+for _, c in ipairs(HYBRID) do UI.HybridCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.HybridCode:AddLabel("Some codes may no longer redeem.")
+
+UI.FiendCode:AddButton({ Text = ">>> Redeem ALL Fiend Codes", Func = function() redeemAllIn(FIEND, "Fiend") end })
+for _, c in ipairs(FIEND) do UI.FiendCode:AddButton({ Text = c, Func = function() copyCode(c) end }) end
 UI.FiendCode:AddLabel("Some codes may no longer redeem.")
 
 ----------------------------------------------------------------
