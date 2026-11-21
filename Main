@@ -1,1 +1,87 @@
+--[[
+  CMDH one-shot entry
+  loadstring(game:HttpGet("https://raw.githubusercontent.com/haerin-source/CMDHHUB/main/Main"))()
 
+  lobby / overworld -> SCRIPT
+  raid (RaidHint phase text) -> Raidfarm
+]]
+
+repeat task.wait() until game:IsLoaded()
+
+local PLACE_ID = 11345435986
+if game.PlaceId ~= PLACE_ID then
+    warn("[CMDH] wrong game PlaceId=", game.PlaceId, "need", PLACE_ID)
+    return
+end
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local PlayerGui = LP:WaitForChild("PlayerGui", 10)
+
+local RAW = {
+    SCRIPT = "https://raw.githubusercontent.com/haerin-source/CMDHHUB/main/SCRIPT",
+    Raidfarm = "https://raw.githubusercontent.com/haerin-source/CMDHHUB/main/Raidfarm",
+}
+
+local function getRaidHintText()
+    if not PlayerGui then return "" end
+    local guis = PlayerGui:FindFirstChild("guis")
+    local hint = guis and guis:FindFirstChild("RaidHint")
+    if hint and (hint:IsA("TextLabel") or hint:IsA("TextButton")) then
+        return tostring(hint.Text or "")
+    end
+    local h = PlayerGui:FindFirstChild("RaidHint", true)
+    if h and (h:IsA("TextLabel") or h:IsA("TextButton")) then
+        return tostring(h.Text or "")
+    end
+    return ""
+end
+
+-- true only when in-raid phase text is showing (not lobby menu)
+local function isRaid()
+    local tx = getRaidHintText()
+    if tx == "" then return false end
+    if tx:match("Wave:%s*%d+") then return true end
+    if tx:match("the fiends%.") then return true end
+    if tx:match("Meet the neon hunter%.") then return true end
+    if tx:match("Finish the neon hunter%.") then return true end
+    if tx:match("Defeat the weird sideburns guy%.") then return true end
+    local low = string.lower(tx)
+    if low:find("ready up", 1, true) then return true end
+    if low:find("raid completed", 1, true) then return true end
+    if tx:find("레이드 완료", 1, true) then return true end
+    if low:find("zombie devil", 1, true) then return true end
+    return false
+end
+
+local function runRaw(url, tag)
+    print("[CMDH] loading", tag, url)
+    local src = game:HttpGet(url)
+    local fn, err = loadstring(src)
+    if not fn then
+        error(err or (tag .. " compile fail"))
+    end
+    return fn()
+end
+
+-- short wait so RaidHint can exist after join / teleport
+task.wait(0.4)
+
+local raid = isRaid()
+if raid then
+    print("[CMDH] context = RAID -> Raidfarm")
+    local ok, err = pcall(runRaw, RAW.Raidfarm, "Raidfarm")
+    if not ok then
+        warn("[CMDH] Raidfarm failed:", err)
+        warn("[CMDH] fallback SCRIPT")
+        pcall(runRaw, RAW.SCRIPT, "SCRIPT")
+    end
+else
+    print("[CMDH] context = MAIN/LOBBY -> SCRIPT")
+    local ok, err = pcall(runRaw, RAW.SCRIPT, "SCRIPT")
+    if not ok then
+        warn("[CMDH] SCRIPT failed:", err)
+    end
+end
+
+print("[CMDH] Main entry finished")
