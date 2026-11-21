@@ -3553,6 +3553,13 @@ end
 
 end)()
 
+
+-- Hub UI+farm in isolated function (Luau 200 local register budget)
+local function CMDH_HubMain()
+    local _Genv = _G
+    _Genv.CMDH_HUB = _Genv.CMDH_HUB or {}
+    local H = _Genv.CMDH_HUB
+    local fn0, err0 = loadstring([=CMDHPART0[
 -- Linoria UI wrapper (Devil Heart shell)
 ----------------------------------------------------------------
 local Players = game:GetService("Players")
@@ -4441,6 +4448,112 @@ UI.Hop:AddToggle("AutoHop", {
 })
 UI.Hop:AddLabel("Manual hops always leave (even with heart)")
 
+-- export shared for next parts
+do
+    local S = _G.CMDH_HUB_SHARED
+    if type(S) ~= "table" then S = {} _G.CMDH_HUB_SHARED = S end
+    pcall(function() S.Library = Library end)
+    pcall(function() S.ThemeManager = ThemeManager end)
+    pcall(function() S.SaveManager = SaveManager end)
+    pcall(function() S.Window = Window end)
+    pcall(function() S.Tabs = Tabs end)
+    pcall(function() S.UI = UI end)
+    pcall(function() S.Player = Player end)
+    pcall(function() S.Players = Players end)
+    pcall(function() S.RunService = RunService end)
+    pcall(function() S.UserInputService = UserInputService end)
+    pcall(function() S.VirtualUser = VirtualUser end)
+    pcall(function() S.TeleportService = TeleportService end)
+    pcall(function() S.HttpService = HttpService end)
+    pcall(function() S.Workspace = Workspace end)
+    pcall(function() S.PlaceId = PlaceId end)
+    pcall(function() S.JobId = JobId end)
+    pcall(function() S.REPO = REPO end)
+    pcall(function() S.REPO_FALLBACK = REPO_FALLBACK end)
+    pcall(function() S.unloaded = unloaded end)
+    pcall(function() S.uiVisible = uiVisible end)
+    pcall(function() S.uiToggleKey = uiToggleKey end)
+    pcall(function() S.afkEnabled = afkEnabled end)
+    pcall(function() S.hopInProgress = hopInProgress end)
+    pcall(function() S.hopMinPlayers = hopMinPlayers end)
+    pcall(function() S.hopMaxPlayers = hopMaxPlayers end)
+    pcall(function() S.autoHopNoHeart = autoHopNoHeart end)
+    pcall(function() S.fiendEspOn = fiendEspOn end)
+    pcall(function() S.devilEspOn = devilEspOn end)
+    pcall(function() S.fiendMap = fiendMap end)
+    pcall(function() S.devilMap = devilMap end)
+    pcall(function() S.COLOR_NPC = COLOR_NPC end)
+    pcall(function() S.COLOR_MUT = COLOR_MUT end)
+    pcall(function() S.notifyEnabled = notifyEnabled end)
+    pcall(function() S.notify = notify end)
+    pcall(function() S.heartDetectOn = heartDetectOn end)
+    pcall(function() S.heartLabel = heartLabel end)
+    pcall(function() S.playerEspWanted = playerEspWanted end)
+    pcall(function() S.farmToggle = farmToggle end)
+    pcall(function() S.raidFarmOn = raidFarmOn end)
+    pcall(function() S.specterFarmOn = specterFarmOn end)
+    pcall(function() S.allFiendFarmOn = allFiendFarmOn end)
+    pcall(function() S.raidMode = raidMode end)
+    pcall(function() S.MOVE_SPEED = MOVE_SPEED end)
+    pcall(function() S.Options = Options end)
+    pcall(function() S.Toggles = Toggles end)
+end
+]=CMDHPART0])
+    if not fn0 then error(err0 or "part0 compile") end
+    local ok0, res0 = pcall(fn0)
+    if not ok0 then error("part0: " .. tostring(res0)) end
+    local fn1, err1 = loadstring([=CMDHPART1[
+
+-- import shared from previous parts
+do
+    local S = _G.CMDH_HUB_SHARED or {}
+    if S.Library ~= nil then Library = S.Library end
+    if S.ThemeManager ~= nil then ThemeManager = S.ThemeManager end
+    if S.SaveManager ~= nil then SaveManager = S.SaveManager end
+    if S.Window ~= nil then Window = S.Window end
+    if S.Tabs ~= nil then Tabs = S.Tabs end
+    if S.UI ~= nil then UI = S.UI end
+    if S.Player ~= nil then Player = S.Player end
+    if S.Players ~= nil then Players = S.Players end
+    if S.RunService ~= nil then RunService = S.RunService end
+    if S.UserInputService ~= nil then UserInputService = S.UserInputService end
+    if S.VirtualUser ~= nil then VirtualUser = S.VirtualUser end
+    if S.TeleportService ~= nil then TeleportService = S.TeleportService end
+    if S.HttpService ~= nil then HttpService = S.HttpService end
+    if S.Workspace ~= nil then Workspace = S.Workspace end
+    if S.PlaceId ~= nil then PlaceId = S.PlaceId end
+    if S.JobId ~= nil then JobId = S.JobId end
+    if S.REPO ~= nil then REPO = S.REPO end
+    if S.REPO_FALLBACK ~= nil then REPO_FALLBACK = S.REPO_FALLBACK end
+    if S.unloaded ~= nil then unloaded = S.unloaded end
+    if S.uiVisible ~= nil then uiVisible = S.uiVisible end
+    if S.uiToggleKey ~= nil then uiToggleKey = S.uiToggleKey end
+    if S.afkEnabled ~= nil then afkEnabled = S.afkEnabled end
+    if S.hopInProgress ~= nil then hopInProgress = S.hopInProgress end
+    if S.hopMinPlayers ~= nil then hopMinPlayers = S.hopMinPlayers end
+    if S.hopMaxPlayers ~= nil then hopMaxPlayers = S.hopMaxPlayers end
+    if S.autoHopNoHeart ~= nil then autoHopNoHeart = S.autoHopNoHeart end
+    if S.fiendEspOn ~= nil then fiendEspOn = S.fiendEspOn end
+    if S.devilEspOn ~= nil then devilEspOn = S.devilEspOn end
+    if S.fiendMap ~= nil then fiendMap = S.fiendMap end
+    if S.devilMap ~= nil then devilMap = S.devilMap end
+    if S.COLOR_NPC ~= nil then COLOR_NPC = S.COLOR_NPC end
+    if S.COLOR_MUT ~= nil then COLOR_MUT = S.COLOR_MUT end
+    if S.notifyEnabled ~= nil then notifyEnabled = S.notifyEnabled end
+    if S.notify ~= nil then notify = S.notify end
+    if S.heartDetectOn ~= nil then heartDetectOn = S.heartDetectOn end
+    if S.heartLabel ~= nil then heartLabel = S.heartLabel end
+    if S.playerEspWanted ~= nil then playerEspWanted = S.playerEspWanted end
+    if S.farmToggle ~= nil then farmToggle = S.farmToggle end
+    if S.raidFarmOn ~= nil then raidFarmOn = S.raidFarmOn end
+    if S.specterFarmOn ~= nil then specterFarmOn = S.specterFarmOn end
+    if S.allFiendFarmOn ~= nil then allFiendFarmOn = S.allFiendFarmOn end
+    if S.raidMode ~= nil then raidMode = S.raidMode end
+    if S.MOVE_SPEED ~= nil then MOVE_SPEED = S.MOVE_SPEED end
+    if S.Options ~= nil then Options = S.Options end
+    if S.Toggles ~= nil then Toggles = S.Toggles end
+end
+
 ----------------------------------------------------------------
 -- Codes
 ----------------------------------------------------------------
@@ -5243,6 +5356,112 @@ task.spawn(function()
         task.wait(0.25)
     end
 end)
+
+-- export shared for next parts
+do
+    local S = _G.CMDH_HUB_SHARED
+    if type(S) ~= "table" then S = {} _G.CMDH_HUB_SHARED = S end
+    pcall(function() S.Library = Library end)
+    pcall(function() S.ThemeManager = ThemeManager end)
+    pcall(function() S.SaveManager = SaveManager end)
+    pcall(function() S.Window = Window end)
+    pcall(function() S.Tabs = Tabs end)
+    pcall(function() S.UI = UI end)
+    pcall(function() S.Player = Player end)
+    pcall(function() S.Players = Players end)
+    pcall(function() S.RunService = RunService end)
+    pcall(function() S.UserInputService = UserInputService end)
+    pcall(function() S.VirtualUser = VirtualUser end)
+    pcall(function() S.TeleportService = TeleportService end)
+    pcall(function() S.HttpService = HttpService end)
+    pcall(function() S.Workspace = Workspace end)
+    pcall(function() S.PlaceId = PlaceId end)
+    pcall(function() S.JobId = JobId end)
+    pcall(function() S.REPO = REPO end)
+    pcall(function() S.REPO_FALLBACK = REPO_FALLBACK end)
+    pcall(function() S.unloaded = unloaded end)
+    pcall(function() S.uiVisible = uiVisible end)
+    pcall(function() S.uiToggleKey = uiToggleKey end)
+    pcall(function() S.afkEnabled = afkEnabled end)
+    pcall(function() S.hopInProgress = hopInProgress end)
+    pcall(function() S.hopMinPlayers = hopMinPlayers end)
+    pcall(function() S.hopMaxPlayers = hopMaxPlayers end)
+    pcall(function() S.autoHopNoHeart = autoHopNoHeart end)
+    pcall(function() S.fiendEspOn = fiendEspOn end)
+    pcall(function() S.devilEspOn = devilEspOn end)
+    pcall(function() S.fiendMap = fiendMap end)
+    pcall(function() S.devilMap = devilMap end)
+    pcall(function() S.COLOR_NPC = COLOR_NPC end)
+    pcall(function() S.COLOR_MUT = COLOR_MUT end)
+    pcall(function() S.notifyEnabled = notifyEnabled end)
+    pcall(function() S.notify = notify end)
+    pcall(function() S.heartDetectOn = heartDetectOn end)
+    pcall(function() S.heartLabel = heartLabel end)
+    pcall(function() S.playerEspWanted = playerEspWanted end)
+    pcall(function() S.farmToggle = farmToggle end)
+    pcall(function() S.raidFarmOn = raidFarmOn end)
+    pcall(function() S.specterFarmOn = specterFarmOn end)
+    pcall(function() S.allFiendFarmOn = allFiendFarmOn end)
+    pcall(function() S.raidMode = raidMode end)
+    pcall(function() S.MOVE_SPEED = MOVE_SPEED end)
+    pcall(function() S.Options = Options end)
+    pcall(function() S.Toggles = Toggles end)
+end
+]=CMDHPART1])
+    if not fn1 then error(err1 or "part1 compile") end
+    local ok1, res1 = pcall(fn1)
+    if not ok1 then error("part1: " .. tostring(res1)) end
+    local fn2, err2 = loadstring([=CMDHPART2[
+
+-- import shared from previous parts
+do
+    local S = _G.CMDH_HUB_SHARED or {}
+    if S.Library ~= nil then Library = S.Library end
+    if S.ThemeManager ~= nil then ThemeManager = S.ThemeManager end
+    if S.SaveManager ~= nil then SaveManager = S.SaveManager end
+    if S.Window ~= nil then Window = S.Window end
+    if S.Tabs ~= nil then Tabs = S.Tabs end
+    if S.UI ~= nil then UI = S.UI end
+    if S.Player ~= nil then Player = S.Player end
+    if S.Players ~= nil then Players = S.Players end
+    if S.RunService ~= nil then RunService = S.RunService end
+    if S.UserInputService ~= nil then UserInputService = S.UserInputService end
+    if S.VirtualUser ~= nil then VirtualUser = S.VirtualUser end
+    if S.TeleportService ~= nil then TeleportService = S.TeleportService end
+    if S.HttpService ~= nil then HttpService = S.HttpService end
+    if S.Workspace ~= nil then Workspace = S.Workspace end
+    if S.PlaceId ~= nil then PlaceId = S.PlaceId end
+    if S.JobId ~= nil then JobId = S.JobId end
+    if S.REPO ~= nil then REPO = S.REPO end
+    if S.REPO_FALLBACK ~= nil then REPO_FALLBACK = S.REPO_FALLBACK end
+    if S.unloaded ~= nil then unloaded = S.unloaded end
+    if S.uiVisible ~= nil then uiVisible = S.uiVisible end
+    if S.uiToggleKey ~= nil then uiToggleKey = S.uiToggleKey end
+    if S.afkEnabled ~= nil then afkEnabled = S.afkEnabled end
+    if S.hopInProgress ~= nil then hopInProgress = S.hopInProgress end
+    if S.hopMinPlayers ~= nil then hopMinPlayers = S.hopMinPlayers end
+    if S.hopMaxPlayers ~= nil then hopMaxPlayers = S.hopMaxPlayers end
+    if S.autoHopNoHeart ~= nil then autoHopNoHeart = S.autoHopNoHeart end
+    if S.fiendEspOn ~= nil then fiendEspOn = S.fiendEspOn end
+    if S.devilEspOn ~= nil then devilEspOn = S.devilEspOn end
+    if S.fiendMap ~= nil then fiendMap = S.fiendMap end
+    if S.devilMap ~= nil then devilMap = S.devilMap end
+    if S.COLOR_NPC ~= nil then COLOR_NPC = S.COLOR_NPC end
+    if S.COLOR_MUT ~= nil then COLOR_MUT = S.COLOR_MUT end
+    if S.notifyEnabled ~= nil then notifyEnabled = S.notifyEnabled end
+    if S.notify ~= nil then notify = S.notify end
+    if S.heartDetectOn ~= nil then heartDetectOn = S.heartDetectOn end
+    if S.heartLabel ~= nil then heartLabel = S.heartLabel end
+    if S.playerEspWanted ~= nil then playerEspWanted = S.playerEspWanted end
+    if S.farmToggle ~= nil then farmToggle = S.farmToggle end
+    if S.raidFarmOn ~= nil then raidFarmOn = S.raidFarmOn end
+    if S.specterFarmOn ~= nil then specterFarmOn = S.specterFarmOn end
+    if S.allFiendFarmOn ~= nil then allFiendFarmOn = S.allFiendFarmOn end
+    if S.raidMode ~= nil then raidMode = S.raidMode end
+    if S.MOVE_SPEED ~= nil then MOVE_SPEED = S.MOVE_SPEED end
+    if S.Options ~= nil then Options = S.Options end
+    if S.Toggles ~= nil then Toggles = S.Toggles end
+end
 
 -- Ready Up (die)
 task.spawn(function()
@@ -6063,6 +6282,112 @@ local mobAimOn = false
 local aimHighlight = nil
 local aimTarget = nil
 local aimConn = nil
+
+-- export shared for next parts
+do
+    local S = _G.CMDH_HUB_SHARED
+    if type(S) ~= "table" then S = {} _G.CMDH_HUB_SHARED = S end
+    pcall(function() S.Library = Library end)
+    pcall(function() S.ThemeManager = ThemeManager end)
+    pcall(function() S.SaveManager = SaveManager end)
+    pcall(function() S.Window = Window end)
+    pcall(function() S.Tabs = Tabs end)
+    pcall(function() S.UI = UI end)
+    pcall(function() S.Player = Player end)
+    pcall(function() S.Players = Players end)
+    pcall(function() S.RunService = RunService end)
+    pcall(function() S.UserInputService = UserInputService end)
+    pcall(function() S.VirtualUser = VirtualUser end)
+    pcall(function() S.TeleportService = TeleportService end)
+    pcall(function() S.HttpService = HttpService end)
+    pcall(function() S.Workspace = Workspace end)
+    pcall(function() S.PlaceId = PlaceId end)
+    pcall(function() S.JobId = JobId end)
+    pcall(function() S.REPO = REPO end)
+    pcall(function() S.REPO_FALLBACK = REPO_FALLBACK end)
+    pcall(function() S.unloaded = unloaded end)
+    pcall(function() S.uiVisible = uiVisible end)
+    pcall(function() S.uiToggleKey = uiToggleKey end)
+    pcall(function() S.afkEnabled = afkEnabled end)
+    pcall(function() S.hopInProgress = hopInProgress end)
+    pcall(function() S.hopMinPlayers = hopMinPlayers end)
+    pcall(function() S.hopMaxPlayers = hopMaxPlayers end)
+    pcall(function() S.autoHopNoHeart = autoHopNoHeart end)
+    pcall(function() S.fiendEspOn = fiendEspOn end)
+    pcall(function() S.devilEspOn = devilEspOn end)
+    pcall(function() S.fiendMap = fiendMap end)
+    pcall(function() S.devilMap = devilMap end)
+    pcall(function() S.COLOR_NPC = COLOR_NPC end)
+    pcall(function() S.COLOR_MUT = COLOR_MUT end)
+    pcall(function() S.notifyEnabled = notifyEnabled end)
+    pcall(function() S.notify = notify end)
+    pcall(function() S.heartDetectOn = heartDetectOn end)
+    pcall(function() S.heartLabel = heartLabel end)
+    pcall(function() S.playerEspWanted = playerEspWanted end)
+    pcall(function() S.farmToggle = farmToggle end)
+    pcall(function() S.raidFarmOn = raidFarmOn end)
+    pcall(function() S.specterFarmOn = specterFarmOn end)
+    pcall(function() S.allFiendFarmOn = allFiendFarmOn end)
+    pcall(function() S.raidMode = raidMode end)
+    pcall(function() S.MOVE_SPEED = MOVE_SPEED end)
+    pcall(function() S.Options = Options end)
+    pcall(function() S.Toggles = Toggles end)
+end
+]=CMDHPART2])
+    if not fn2 then error(err2 or "part2 compile") end
+    local ok2, res2 = pcall(fn2)
+    if not ok2 then error("part2: " .. tostring(res2)) end
+    local fn3, err3 = loadstring([=CMDHPART3[
+
+-- import shared from previous parts
+do
+    local S = _G.CMDH_HUB_SHARED or {}
+    if S.Library ~= nil then Library = S.Library end
+    if S.ThemeManager ~= nil then ThemeManager = S.ThemeManager end
+    if S.SaveManager ~= nil then SaveManager = S.SaveManager end
+    if S.Window ~= nil then Window = S.Window end
+    if S.Tabs ~= nil then Tabs = S.Tabs end
+    if S.UI ~= nil then UI = S.UI end
+    if S.Player ~= nil then Player = S.Player end
+    if S.Players ~= nil then Players = S.Players end
+    if S.RunService ~= nil then RunService = S.RunService end
+    if S.UserInputService ~= nil then UserInputService = S.UserInputService end
+    if S.VirtualUser ~= nil then VirtualUser = S.VirtualUser end
+    if S.TeleportService ~= nil then TeleportService = S.TeleportService end
+    if S.HttpService ~= nil then HttpService = S.HttpService end
+    if S.Workspace ~= nil then Workspace = S.Workspace end
+    if S.PlaceId ~= nil then PlaceId = S.PlaceId end
+    if S.JobId ~= nil then JobId = S.JobId end
+    if S.REPO ~= nil then REPO = S.REPO end
+    if S.REPO_FALLBACK ~= nil then REPO_FALLBACK = S.REPO_FALLBACK end
+    if S.unloaded ~= nil then unloaded = S.unloaded end
+    if S.uiVisible ~= nil then uiVisible = S.uiVisible end
+    if S.uiToggleKey ~= nil then uiToggleKey = S.uiToggleKey end
+    if S.afkEnabled ~= nil then afkEnabled = S.afkEnabled end
+    if S.hopInProgress ~= nil then hopInProgress = S.hopInProgress end
+    if S.hopMinPlayers ~= nil then hopMinPlayers = S.hopMinPlayers end
+    if S.hopMaxPlayers ~= nil then hopMaxPlayers = S.hopMaxPlayers end
+    if S.autoHopNoHeart ~= nil then autoHopNoHeart = S.autoHopNoHeart end
+    if S.fiendEspOn ~= nil then fiendEspOn = S.fiendEspOn end
+    if S.devilEspOn ~= nil then devilEspOn = S.devilEspOn end
+    if S.fiendMap ~= nil then fiendMap = S.fiendMap end
+    if S.devilMap ~= nil then devilMap = S.devilMap end
+    if S.COLOR_NPC ~= nil then COLOR_NPC = S.COLOR_NPC end
+    if S.COLOR_MUT ~= nil then COLOR_MUT = S.COLOR_MUT end
+    if S.notifyEnabled ~= nil then notifyEnabled = S.notifyEnabled end
+    if S.notify ~= nil then notify = S.notify end
+    if S.heartDetectOn ~= nil then heartDetectOn = S.heartDetectOn end
+    if S.heartLabel ~= nil then heartLabel = S.heartLabel end
+    if S.playerEspWanted ~= nil then playerEspWanted = S.playerEspWanted end
+    if S.farmToggle ~= nil then farmToggle = S.farmToggle end
+    if S.raidFarmOn ~= nil then raidFarmOn = S.raidFarmOn end
+    if S.specterFarmOn ~= nil then specterFarmOn = S.specterFarmOn end
+    if S.allFiendFarmOn ~= nil then allFiendFarmOn = S.allFiendFarmOn end
+    if S.raidMode ~= nil then raidMode = S.raidMode end
+    if S.MOVE_SPEED ~= nil then MOVE_SPEED = S.MOVE_SPEED end
+    if S.Options ~= nil then Options = S.Options end
+    if S.Toggles ~= nil then Toggles = S.Toggles end
+end
 
 local function clearAimVisual()
     if aimHighlight then
@@ -6898,3 +7223,13 @@ task.defer(function()
 end)
 
 print("[CMDH] mob farm + stun + aimbot + keybinds")
+]=CMDHPART3])
+    if not fn3 then error(err3 or "part3 compile") end
+    local ok3, res3 = pcall(fn3)
+    if not ok3 then error("part3: " .. tostring(res3)) end
+
+end
+local _hubOk, _hubErr = pcall(CMDH_HubMain)
+if not _hubOk then
+    warn("[CMDH] HubMain error: " .. tostring(_hubErr))
+end
