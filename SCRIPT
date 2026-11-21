@@ -566,7 +566,7 @@ UI.Combat:AddSlider("ParryKickDelay", {
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 0: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 0: " .. tostring(err)) end
   -- segment 1
   local ok, err = pcall(function()
   do local S=_G.CMDH_HUB_SHARED or {}
@@ -622,6 +622,18 @@ UI.Combat:AddSlider("ParryKickDelay", {
     if S.apCall~=nil then apCall=S.apCall end
     if S.fetchLib~=nil then fetchLib=S.fetchLib end
   end
+
+    if type(UI) ~= "table" then UI = {} end
+    if UI.MobFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm") end)
+    end
+    if UI.RaidFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid") end)
+    end
+    if UI.Specter == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.Specter = Tabs.Farm:AddRightGroupbox("Specter") end)
+    end
+
 
 UI.Combat:AddToggle("AutoAttack", {
     Text = "Auto Attack Reactions",
@@ -1161,7 +1173,7 @@ UI.Hop:AddLabel("Manual hops always leave (even with heart)")
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 1: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 1: " .. tostring(err)) end
   -- segment 2
   local ok, err = pcall(function()
   do local S=_G.CMDH_HUB_SHARED or {}
@@ -1217,6 +1229,18 @@ UI.Hop:AddLabel("Manual hops always leave (even with heart)")
     if S.apCall~=nil then apCall=S.apCall end
     if S.fetchLib~=nil then fetchLib=S.fetchLib end
   end
+
+    if type(UI) ~= "table" then UI = {} end
+    if UI.MobFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm") end)
+    end
+    if UI.RaidFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid") end)
+    end
+    if UI.Specter == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.Specter = Tabs.Farm:AddRightGroupbox("Specter") end)
+    end
+
 
 
 
@@ -1742,7 +1766,7 @@ end
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 2: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 2: " .. tostring(err)) end
   -- segment 3
   local ok, err = pcall(function()
   do local S=_G.CMDH_HUB_SHARED or {}
@@ -1798,6 +1822,18 @@ end
     if S.apCall~=nil then apCall=S.apCall end
     if S.fetchLib~=nil then fetchLib=S.fetchLib end
   end
+
+    if type(UI) ~= "table" then UI = {} end
+    if UI.MobFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm") end)
+    end
+    if UI.RaidFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid") end)
+    end
+    if UI.Specter == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.Specter = Tabs.Farm:AddRightGroupbox("Specter") end)
+    end
+
 
 UI.Unload:AddToggle("FastMode", {
     Text = "Fast Mode",
@@ -2263,7 +2299,7 @@ end)
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 3: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 3: " .. tostring(err)) end
   -- segment 4
   local ok, err = pcall(function()
   do local S=_G.CMDH_HUB_SHARED or {}
@@ -2319,6 +2355,18 @@ end)
     if S.apCall~=nil then apCall=S.apCall end
     if S.fetchLib~=nil then fetchLib=S.fetchLib end
   end
+
+    if type(UI) ~= "table" then UI = {} end
+    if UI.MobFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm") end)
+    end
+    if UI.RaidFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid") end)
+    end
+    if UI.Specter == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.Specter = Tabs.Farm:AddRightGroupbox("Specter") end)
+    end
+
 
 -- Instant path: when Ready Up is added to GUI (even while unfocused)
 task.spawn(function()
@@ -2777,7 +2825,7 @@ local KEYCODE_MAP = {
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 4: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 4: " .. tostring(err)) end
   -- segment 5
   local ok, err = pcall(function()
   do local S=_G.CMDH_HUB_SHARED or {}
@@ -2833,6 +2881,18 @@ local KEYCODE_MAP = {
     if S.apCall~=nil then apCall=S.apCall end
     if S.fetchLib~=nil then fetchLib=S.fetchLib end
   end
+
+    if type(UI) ~= "table" then UI = {} end
+    if UI.MobFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm") end)
+    end
+    if UI.RaidFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid") end)
+    end
+    if UI.Specter == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.Specter = Tabs.Farm:AddRightGroupbox("Specter") end)
+    end
+
 
 local function pressKey(code)
     pcall(function()
@@ -2941,6 +3001,7 @@ local function priorityText()
     return "Priority: " .. table.concat(parts, " > ")
 end
 
+if not UI.MobFarm then error("UI.MobFarm missing after import") end
 local prioLabel = UI.MobFarm:AddLabel(priorityText())
 
 local function toggleMobPriority(name)
@@ -3290,7 +3351,7 @@ end
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 5: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 5: " .. tostring(err)) end
   -- segment 6
   local ok, err = pcall(function()
   do local S=_G.CMDH_HUB_SHARED or {}
@@ -3346,6 +3407,18 @@ end
     if S.apCall~=nil then apCall=S.apCall end
     if S.fetchLib~=nil then fetchLib=S.fetchLib end
   end
+
+    if type(UI) ~= "table" then UI = {} end
+    if UI.MobFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm") end)
+    end
+    if UI.RaidFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid") end)
+    end
+    if UI.Specter == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.Specter = Tabs.Farm:AddRightGroupbox("Specter") end)
+    end
+
 
 local function stopMobAim()
     mobAimOn = false
@@ -3813,7 +3886,7 @@ end)
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 6: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 6: " .. tostring(err)) end
   -- segment 7
   local ok, err = pcall(function()
   do local S=_G.CMDH_HUB_SHARED or {}
@@ -3869,6 +3942,18 @@ end)
     if S.apCall~=nil then apCall=S.apCall end
     if S.fetchLib~=nil then fetchLib=S.fetchLib end
   end
+
+    if type(UI) ~= "table" then UI = {} end
+    if UI.MobFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm") end)
+    end
+    if UI.RaidFarm == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid") end)
+    end
+    if UI.Specter == nil and type(Tabs) == "table" and Tabs.Farm then
+        pcall(function() UI.Specter = Tabs.Farm:AddRightGroupbox("Specter") end)
+    end
+
 
 -- UI
 UI.RaidFarm:AddDropdown("RaidMode", {
@@ -4294,7 +4379,7 @@ print("[CMDH] mob farm + stun + aimbot + keybinds")
     pcall(function() S.fetchLib=fetchLib end)
   end
   end)
-  if not ok then error("hub segment 7: " .. tostring(err)) end
+  if not ok then warn("[CMDH] hub segment 7: " .. tostring(err)) end
 end
 local _hubOk, _hubErr = pcall(CMDH_HubMain)
 if not _hubOk then
