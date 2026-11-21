@@ -1,1 +1,307 @@
- 
+ --[[
+  CMDH Raidfarm only — Chainsaw Man: Devil's Heart
+  For https://raw.githubusercontent.com/haerin-source/CMDHHUB/main/Raidfarm
+  Auto farm by RaidHint phase + Ready Up + mode Zombie/Mention/Makima
+]]
+
+repeat task.wait() until game:IsLoaded()
+if game.PlaceId ~= 11345435986 then
+    warn("[Raidfarm] wrong place")
+    return
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local UserInputService = game:GetService("UserInputService")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+local GEN = (type(getgenv) == "function" and getgenv()) or _G
+
+if GEN.CMDH_RAIDFARM_RUNNING then
+    warn("[Raidfarm] already running")
+    return
+end
+GEN.CMDH_RAIDFARM_RUNNING = true
+
+local S = {
+    farmOn = true,
+    autoReady = true,
+    mode = "Zombie", -- Zombie | Mention | Makima
+    unloaded = false,
+}
+
+local function getHRP()
+    local c = Player.Character
+    if not c then return nil end
+    return c:FindFirstChild("HumanoidRootPart"), c:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRaidHintText()
+    local pg = Player:FindFirstChild("PlayerGui")
+    if not pg then return "" end
+    local guis = pg:FindFirstChild("guis")
+    local hint = guis and guis:FindFirstChild("RaidHint")
+    if hint and (hint:IsA("TextLabel") or hint:IsA("TextButton")) then
+        return hint.Text or ""
+    end
+    local h = pg:FindFirstChild("RaidHint", true)
+    if h and (h:IsA("TextLabel") or h:IsA("TextButton")) then return h.Text or "" end
+    return ""
+end
+
+local function raidPhase()
+    local tx = getRaidHintText()
+    if tx == "" then return nil, tx end
+    if tx:match("Wave:%s*%d+") then return "wave", tx end
+    if tx:match("the fiends%.") then return "fiends", tx end
+    if tx:match("Meet the neon hunter%.") then return "neon_meet", tx end
+    if tx:match("Finish the neon hunter%.") then return "neon_finish", tx end
+    if tx:match("Defeat the weird sideburns guy%.") then return "sideburns", tx end
+    local low = string.lower(tx)
+    if low:find("ready up", 1, true) then return "ready", tx end
+    if low:find("raid completed", 1, true) or tx:find("레이드 완료", 1, true) then return "done", tx end
+    if low:find("zombie devil", 1, true) then return "wave5", tx end
+    return "active", tx
+end
+
+local function isPlayerChar(model)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character == model then return true end
+    end
+    return false
+end
+
+local function isAliveMob(m)
+    if not m or isPlayerChar(m) then return false end
+    local hum = m:FindFirstChildOfClass("Humanoid")
+    local root = m:FindFirstChild("HumanoidRootPart")
+    return hum and root and hum.Health > 0
+end
+
+local function nameMatch(modelName, aliases)
+    if type(aliases) == "string" then aliases = { aliases } end
+    local compact = modelName:gsub("%s+", "")
+    for _, a in ipairs(aliases) do
+        if modelName == a or compact == a:gsub("%s+", "") then return true end
+        if string.lower(modelName):find(string.lower(a), 1, true) then return true end
+    end
+    return false
+end
+
+local ZOMBIE_PRIO = { "Zombie Devil", "Crawler Zombie", "Tank Zombie", "Zombie" }
+local MAKIMA_PRIO = {
+    { "Longsword User", "LongswordUser" },
+    { "Fake Makima", "FakeMakima" },
+    { "Makima" },
+}
+local MENTION_PRIO = {
+    "Neon Hunter", "Sideburns", "weird sideburns",
+    "FlyFiend", "Fly Fiend", "Mannequin", "Mantis", "Toxin", "Wasp", "Fiend",
+}
+
+local function livingFolder()
+    return workspace:FindFirstChild("Living") or workspace:FindFirstChild("Monster") or workspace
+end
+
+local function pickTarget()
+    local folder = livingFolder()
+    local my = select(1, getHRP())
+    if not folder or not my then return nil end
+    local candidates = {}
+    for _, m in ipairs(folder:GetChildren()) do
+        if isAliveMob(m) then
+            table.insert(candidates, m)
+        end
+    end
+    local function bestByList(list)
+        for _, entry in ipairs(list) do
+            local aliases = type(entry) == "table" and entry or { entry }
+            local best, bestD = nil, math.huge
+            for _, m in ipairs(candidates) do
+                if nameMatch(m.Name, aliases) then
+                    local d = (my.Position - m.HumanoidRootPart.Position).Magnitude
+                    if d < bestD then best, bestD = m, d end
+                end
+            end
+            if best then return best end
+        end
+        return nil
+    end
+    if S.mode == "Makima" then
+        return bestByList(MAKIMA_PRIO)
+    elseif S.mode == "Mention" then
+        return bestByList(MENTION_PRIO) or bestByList({ "Fiend" })
+    else
+        -- Zombie: wave5 prefer devil
+        local tx = getRaidHintText()
+        if tx:match("Wave:%s*5") or tx:lower():find("zombie devil") then
+            local d = bestByList({ "Zombie Devil" })
+            if d then return d end
+        end
+        return bestByList(ZOMBIE_PRIO)
+    end
+end
+
+local function behindCF(targetRoot, dist)
+    dist = dist or 4
+    local look = targetRoot.CFrame.LookVector
+    local pos = targetRoot.Position - look * dist + Vector3.new(0, 1.5, 0)
+    return CFrame.new(pos, targetRoot.Position)
+end
+
+local function attackPulse()
+    pcall(function()
+        local events = ReplicatedStorage:FindFirstChild("events")
+        if not events then return end
+        local remote = events:FindFirstChild("remote") or events:FindFirstChild("toolremote")
+        -- light M1 via VIM
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+    end)
+end
+
+local function farmOne(target)
+    local root, hum = getHRP()
+    if not root or not hum or not target then return end
+    local tRoot = target:FindFirstChild("HumanoidRootPart")
+    local tHum = target:FindFirstChildOfClass("Humanoid")
+    if not tRoot or not tHum or tHum.Health <= 0 then return end
+    if hum.Sit then hum.Sit = false end
+    -- stick behind + face
+    root.CFrame = behindCF(tRoot, 3.5)
+    attackPulse()
+end
+
+local function clickReadyUp()
+    local pg = PlayerGui
+    for _, d in ipairs(pg:GetDescendants()) do
+        if d:IsA("TextButton") or d:IsA("TextLabel") then
+            local t = string.lower(d.Text or "")
+            if t:find("ready up", 1, true) and d.Visible ~= false then
+                pcall(function()
+                    if firesignal then
+                        firesignal(d.MouseButton1Click)
+                    end
+                    VirtualInputManager:SendMouseButtonEvent(
+                        d.AbsolutePosition.X + d.AbsoluteSize.X / 2,
+                        d.AbsolutePosition.Y + d.AbsoluteSize.Y / 2 + 40,
+                        0, true, game, 0
+                    )
+                    VirtualInputManager:SendMouseButtonEvent(
+                        d.AbsolutePosition.X + d.AbsoluteSize.X / 2,
+                        d.AbsolutePosition.Y + d.AbsoluteSize.Y / 2 + 40,
+                        0, false, game, 0
+                    )
+                end)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- UI
+local sg = Instance.new("ScreenGui")
+sg.Name = "CMDH_RaidfarmUI"
+sg.ResetOnSpawn = false
+sg.Parent = PlayerGui
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(220, 150)
+main.Position = UDim2.fromOffset(18, 140)
+main.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+main.BorderSizePixel = 0
+main.Parent = sg
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Size = UDim2.new(1, 0, 0, 22)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.TextColor3 = Color3.fromRGB(240, 240, 250)
+title.Text = "RAID FARM"
+title.Parent = main
+local status = Instance.new("TextLabel")
+status.BackgroundTransparency = 1
+status.Position = UDim2.fromOffset(10, 24)
+status.Size = UDim2.new(1, -20, 0, 16)
+status.Font = Enum.Font.Gotham
+status.TextSize = 12
+status.TextXAlignment = Enum.TextXAlignment.Left
+status.TextColor3 = Color3.fromRGB(120, 200, 255)
+status.Text = "phase: —"
+status.Parent = main
+local function btn(y, text)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 26)
+    b.Position = UDim2.fromOffset(10, y)
+    b.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    b.TextColor3 = Color3.fromRGB(240, 240, 245)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.Text = text
+    b.Parent = main
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    return b
+end
+local farmBtn = btn(46, "Auto Farm: ON")
+local readyBtn = btn(76, "Auto Ready: ON")
+local modeBtn = btn(106, "Mode: Zombie")
+local modes = { "Zombie", "Mention", "Makima" }
+local modeIdx = 1
+local function paint()
+    farmBtn.Text = S.farmOn and "Auto Farm: ON" or "Auto Farm: OFF"
+    farmBtn.BackgroundColor3 = S.farmOn and Color3.fromRGB(40, 140, 80) or Color3.fromRGB(40, 40, 50)
+    readyBtn.Text = S.autoReady and "Auto Ready: ON" or "Auto Ready: OFF"
+    readyBtn.BackgroundColor3 = S.autoReady and Color3.fromRGB(40, 140, 80) or Color3.fromRGB(40, 40, 50)
+    modeBtn.Text = "Mode: " .. S.mode
+end
+paint()
+farmBtn.MouseButton1Click:Connect(function() S.farmOn = not S.farmOn paint() end)
+readyBtn.MouseButton1Click:Connect(function() S.autoReady = not S.autoReady paint() end)
+modeBtn.MouseButton1Click:Connect(function()
+    modeIdx = modeIdx % #modes + 1
+    S.mode = modes[modeIdx]
+    paint()
+end)
+
+-- loops
+task.spawn(function()
+    while not S.unloaded and GEN.CMDH_RAIDFARM_RUNNING do
+        local phase, tx = raidPhase()
+        status.Text = "phase: " .. tostring(phase or "—")
+        if S.autoReady and (phase == "ready" or phase == "done") then
+            clickReadyUp()
+        end
+        task.wait(0.4)
+    end
+end)
+
+task.spawn(function()
+    while not S.unloaded and GEN.CMDH_RAIDFARM_RUNNING do
+        if S.farmOn then
+            local phase = raidPhase()
+            if phase and phase ~= "ready" then
+                local t = pickTarget()
+                if t then farmOne(t) end
+            end
+            task.wait(0.12)
+        else
+            task.wait(0.3)
+        end
+    end
+end)
+
+GEN.CMDH_RaidfarmUnload = function()
+    S.unloaded = true
+    GEN.CMDH_RAIDFARM_RUNNING = false
+    pcall(function() sg:Destroy() end)
+    print("[Raidfarm] unloaded")
+end
+
+print("[Raidfarm] loaded — mode", S.mode)
