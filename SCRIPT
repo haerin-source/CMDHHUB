@@ -3896,6 +3896,11 @@ local hopInProgress = false
 local hopMinPlayers, hopMaxPlayers = 1, 20
 local autoHopNoHeart = false
 local fiendEspOn, devilEspOn = false, false
+-- forward flags used by AutoDance heavy-pause (assigned again later)
+farmToggle = false
+raidFarmOn = false
+specterFarmOn = false
+allFiendFarmOn = false
 local fiendMap, devilMap = {}, {}
 
 local COLOR_NPC = Color3.fromRGB(255, 255, 255)
@@ -3965,18 +3970,55 @@ UI.Combat:AddToggle("AutoAttack", {
 -- Heart status (hub tracker)
 ----------------------------------------------------------------
 local heartLabel = UI.Heart:AddLabel("Devil Heart: scanning...")
+local heartDetectOn = true
+
+local function clearHeartMarkers()
+    pcall(function()
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d.Name == "DevilHeartName" or d.Name == "HeartHighlight"
+                or d.Name == "CMDH_HeartBB" or d.Name == "CMDH_HeartHL" then
+                d:Destroy()
+            end
+        end
+    end)
+    if type(_G.DevilHeartTracker) == "table" then
+        _G.DevilHeartTracker.hasHeart = false
+        _G.DevilHeartTracker.count = 0
+        if type(_G.DevilHeartTracker.hearts) == "table" then
+            for k in pairs(_G.DevilHeartTracker.hearts) do
+                _G.DevilHeartTracker.hearts[k] = nil
+            end
+        end
+    end
+end
+
+UI.Heart:AddToggle("HeartDetect", {
+    Text = "Heart Detect",
+    Default = true,
+    Callback = function(v)
+        heartDetectOn = v and true or false
+        if not heartDetectOn then
+            clearHeartMarkers()
+            heartLabel:SetText("Devil Heart: detect OFF")
+        end
+    end,
+})
 
 task.spawn(function()
     while not unloaded do
-        local t = _G.DevilHeartTracker
-        if t then
-            if t.hasHeart then
-                heartLabel:SetText(string.format("Devil Heart: FOUND (%d)", t.count or 1))
-            else
-                heartLabel:SetText("Devil Heart: none on this server")
-            end
+        if not heartDetectOn then
+            heartLabel:SetText("Devil Heart: detect OFF")
         else
-            heartLabel:SetText("Devil Heart: tracker not ready")
+            local t = _G.DevilHeartTracker
+            if t then
+                if t.hasHeart then
+                    heartLabel:SetText(string.format("Devil Heart: FOUND (%d)", t.count or 1))
+                else
+                    heartLabel:SetText("Devil Heart: none on this server")
+                end
+            else
+                heartLabel:SetText("Devil Heart: tracker not ready")
+            end
         end
         task.wait(2)
     end
@@ -4540,6 +4582,9 @@ end)
 local function unloadScript()
     if unloaded then return end
     unloaded = true
+    pcall(function() if clearHeartMarkers then clearHeartMarkers() end end)
+    pcall(function() if setSpider then setSpider(false) end end)
+    pcall(function() if destroyFastGui then destroyFastGui() end end)
     farmToggle = false
     raidFarmOn = false
     fiendEspOn, devilEspOn = false, false
@@ -4667,18 +4712,281 @@ UI.PlayerMove:AddToggle("FlyPlatform", {
 })
 UI.PlayerMove:AddLabel("Anchored pad under feet")
 
+-- Spider climb
+local spiderOn = false
+local spiderConn, spiderBv
+local function setSpider(on)
+    spiderOn = on and true or false
+    if spiderConn then pcall(function() spiderConn:Disconnect() end) spiderConn = nil end
+    if spiderBv then pcall(function() spiderBv:Destroy() end) spiderBv = nil end
+    if not spiderOn then return end
+    spiderConn = RunService.Heartbeat:Connect(function()
+        if unloaded or not spiderOn then return end
+        local char = Player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { char }
+        local hit = workspace:Raycast(root.Position, root.CFrame.LookVector * 2.2, params)
+        if hit then
+            if not spiderBv or not spiderBv.Parent then
+                local bv = Instance.new("BodyVelocity")
+                bv.Name = "CMDH_SpiderBV"
+                bv.MaxForce = Vector3.new(0, 1e5, 0)
+                bv.Velocity = Vector3.new(0, 28, 0)
+                bv.Parent = root
+                spiderBv = bv
+            else
+                spiderBv.Velocity = Vector3.new(0, 28, 0)
+            end
+        else
+            if spiderBv then pcall(function() spiderBv:Destroy() end) spiderBv = nil end
+        end
+    end)
+end
+
+UI.PlayerMove:AddToggle("SpiderClimb", {
+    Text = "Spider",
+    Default = false,
+    Callback = function(v)
+        setSpider(v)
+    end,
+})
+UI.PlayerMove:AddLabel("Climb when facing a wall")
+
+-- AutoDance: while ON, pause heavy loops (ESP scans / farm gates use this flag)
+local autoDanceHeavyPaused = false
+local heavySnapshot = {}
+local function pauseHeavyForDance(on)
+    if on then
+        if autoDanceHeavyPaused then return end
+        autoDanceHeavyPaused = true
+        heavySnapshot = {
+            fiendEsp = fiendEspOn,
+            devilEsp = devilEspOn,
+            playerEsp = playerEspWanted,
+            farm = farmToggle,
+            raid = raidFarmOn,
+            specter = specterFarmOn,
+            allFiend = allFiendFarmOn,
+        }
+        fiendEspOn, devilEspOn = false, false
+        playerEspWanted = false
+        pcall(function() if _G.PlayerEspAPI then _G.PlayerEspAPI.SetEnabled(false) end end)
+        pcall(function() if _G.NPCEspAPI then _G.NPCEspAPI.SetEnabled(false) end end)
+        farmToggle, raidFarmOn, specterFarmOn, allFiendFarmOn = false, false, false, false
+        notify("AutoDance", "heavy features paused")
+    else
+        if not autoDanceHeavyPaused then return end
+        autoDanceHeavyPaused = false
+        fiendEspOn = heavySnapshot.fiendEsp and true or false
+        devilEspOn = heavySnapshot.devilEsp and true or false
+        playerEspWanted = heavySnapshot.playerEsp and true or false
+        if playerEspWanted and _G.PlayerEspAPI then pcall(function() _G.PlayerEspAPI.SetEnabled(true) end) end
+        farmToggle = heavySnapshot.farm and true or false
+        raidFarmOn = heavySnapshot.raid and true or false
+        specterFarmOn = heavySnapshot.specter and true or false
+        allFiendFarmOn = heavySnapshot.allFiend and true or false
+        heavySnapshot = {}
+        notify("AutoDance", "heavy features restored")
+    end
+end
+
 UI.PlayerMove:AddToggle("AutoDance", {
     Text = "Auto Dance (DDR)",
     Default = false,
     Callback = function(v)
+        if v then
+            pauseHeavyForDance(true)
+        else
+            pauseHeavyForDance(false)
+        end
         if _G.DanceAPI and _G.DanceAPI.SetAutoDanceEnabled then
             _G.DanceAPI.SetAutoDanceEnabled(v)
         end
     end,
 })
 
+-- Fast Mode (Settings)
+local fastModeOn = false
+local fastGui, fastBar, fastLabel, fastPct, fastHitch
+local function destroyFastGui()
+    if fastHitch then pcall(function() fastHitch:Disconnect() end) fastHitch = nil end
+    if fastGui then pcall(function() fastGui:Destroy() end) end
+    fastGui, fastBar, fastLabel, fastPct = nil, nil, nil, nil
+end
+local function ensureFastGui()
+    if fastGui then return end
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "CMDH_FastMode"
+    sg.IgnoreGuiInset = true
+    sg.ResetOnSpawn = false
+    sg.DisplayOrder = 2000
+    sg.Parent = game:GetService("CoreGui")
+    local bg = Instance.new("Frame")
+    bg.BackgroundColor3 = Color3.new(0,0,0)
+    bg.Size = UDim2.fromScale(1,1)
+    bg.BorderSizePixel = 0
+    bg.Parent = sg
+    fastLabel = Instance.new("TextLabel")
+    fastLabel.BackgroundTransparency = 1
+    fastLabel.Size = UDim2.new(1,-40,0,28)
+    fastLabel.Position = UDim2.new(0,20,0.42,0)
+    fastLabel.Font = Enum.Font.GothamBold
+    fastLabel.TextSize = 18
+    fastLabel.TextColor3 = Color3.fromRGB(230,230,240)
+    fastLabel.Text = "Enabling Fast Mode..."
+    fastLabel.Parent = bg
+    fastPct = Instance.new("TextLabel")
+    fastPct.BackgroundTransparency = 1
+    fastPct.Size = UDim2.new(1,-40,0,22)
+    fastPct.Position = UDim2.new(0,20,0.42,32)
+    fastPct.Font = Enum.Font.Gotham
+    fastPct.TextSize = 14
+    fastPct.TextColor3 = Color3.fromRGB(180,180,190)
+    fastPct.Text = "0%"
+    fastPct.Parent = bg
+    local track = Instance.new("Frame")
+    track.BackgroundColor3 = Color3.fromRGB(40,40,48)
+    track.Size = UDim2.new(0.5,0,0,10)
+    track.Position = UDim2.new(0.25,0,0.42,64)
+    track.Parent = bg
+    Instance.new("UICorner", track).CornerRadius = UDim.new(0,4)
+    fastBar = Instance.new("Frame")
+    fastBar.BackgroundColor3 = Color3.fromRGB(80,200,120)
+    fastBar.Size = UDim2.new(0,0,1,0)
+    fastBar.Parent = track
+    Instance.new("UICorner", fastBar).CornerRadius = UDim.new(0,4)
+    fastGui = sg
+end
+local function runFastProgress(text, seconds, hitch)
+    ensureFastGui()
+    fastLabel.Text = text
+    fastBar.Size = UDim2.new(0,0,1,0)
+    fastPct.Text = "0%"
+    fastGui.Enabled = true
+    if hitch then
+        fastHitch = RunService.RenderStepped:Connect(function()
+            local t0 = os.clock()
+            while os.clock() - t0 < 0.012 do end
+        end)
+    end
+    for i = 1, 40 do
+        if unloaded then break end
+        local a = i/40
+        fastBar.Size = UDim2.new(a,0,1,0)
+        fastPct.Text = string.format("%d%%", math.floor(a*100))
+        task.wait(seconds/40)
+    end
+    if fastHitch then pcall(function() fastHitch:Disconnect() end) fastHitch = nil end
+end
+local function setFastMode(on)
+    if on and not fastModeOn then
+        fastModeOn = true
+        task.spawn(function()
+            runFastProgress("Enabling Fast Mode...", 1.4, true)
+            pcall(function()
+                local hum = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    getgenv().CMDH_Fast_Walk = getgenv().CMDH_Fast_Walk or hum.WalkSpeed
+                    hum.WalkSpeed = math.max(hum.WalkSpeed, 24)
+                end
+            end)
+            if fastGui then fastGui.Enabled = false end
+        end)
+    elseif not on and fastModeOn then
+        fastModeOn = false
+        task.spawn(function()
+            runFastProgress("Disabling Fast Mode...", 1.0, false)
+            pcall(function()
+                local hum = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+                if hum and getgenv().CMDH_Fast_Walk then hum.WalkSpeed = getgenv().CMDH_Fast_Walk end
+            end)
+            if fastGui then fastGui.Enabled = false end
+        end)
+    end
+end
+
+UI.Unload:AddToggle("FastMode", {
+    Text = "Fast Mode",
+    Default = false,
+    Callback = function(v)
+        setFastMode(v)
+    end,
+})
+UI.Unload:AddLabel("Black overlay + hitch while toggling")
+
+-- UI aspect ratio
+UI.Unload:AddDropdown("UIAspect", {
+    Values = { "Default", "16:9", "16:10", "4:3", "1:1", "21:9" },
+    Default = 1,
+    Text = "UI Aspect Ratio",
+    Callback = function(v)
+        local map = {
+            ["Default"] = nil,
+            ["16:9"] = 16/9,
+            ["16:10"] = 16/10,
+            ["4:3"] = 4/3,
+            ["1:1"] = 1,
+            ["21:9"] = 21/9,
+        }
+        local ratio = map[v]
+        pcall(function()
+            local lib = Library
+            if not lib then return end
+            -- try common Linoria window holders
+            local candidates = {}
+            if lib.Inner then table.insert(candidates, lib.Inner) end
+            if lib.Holder then table.insert(candidates, lib.Holder) end
+            if typeof(Window) == "table" and Window.Outer then table.insert(candidates, Window.Outer) end
+            for _, gui in ipairs(game:GetService("CoreGui"):GetDescendants()) do
+                if gui:IsA("Frame") and (gui.Name == "Main" or gui.Name == "Window" or gui.Name == "Holder") then
+                    if gui.AbsoluteSize.X > 300 and gui.AbsoluteSize.Y > 200 then
+                        table.insert(candidates, gui)
+                    end
+                end
+            end
+            for _, fr in ipairs(candidates) do
+                local ar = fr:FindFirstChildOfClass("UIAspectRatioConstraint")
+                if not ratio then
+                    if ar then ar:Destroy() end
+                else
+                    if not ar then
+                        ar = Instance.new("UIAspectRatioConstraint")
+                        ar.Parent = fr
+                    end
+                    ar.AspectRatio = ratio
+                    ar.AspectType = Enum.AspectType.FitWithinMaxSize
+                end
+            end
+        end)
+        notify("UI", "Aspect " .. tostring(v))
+    end,
+})
+
+-- ESC must not soft-lock game input when UI open
+pcall(function()
+    UserInputService.ModalEnabled = false
+end)
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if unloaded then return end
+    if input.KeyCode == Enum.KeyCode.Escape then
+        pcall(function()
+            UserInputService.ModalEnabled = false
+            GuiService = game:GetService("GuiService")
+            GuiService.SelectedObject = nil
+        end)
+    end
+end)
+
 UI.Unload:AddButton({ Text = "Unload Script", Func = unloadScript, DoubleClick = true })
-Library:OnUnload(function() unloaded = true end)
+Library:OnUnload(function()
+    unloaded = true
+    pcall(clearHeartMarkers)
+    pcall(function() setSpider(false) end)
+    pcall(destroyFastGui)
+end)
 
 
 ----------------------------------------------------------------
@@ -5100,12 +5408,12 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local PostSimulation = RunService.PostSimulation
 
-local farmToggle = false
-local raidFarmOn = false
+farmToggle = false
+raidFarmOn = false
 local raidMode = "Zombie"
 local raidDifficulty = "Normal"
-local specterFarmOn = false
-local allFiendFarmOn = false
+specterFarmOn = false
+allFiendFarmOn = false
 local raidHealing = false
 local selectedMobs = {} -- priority ordered: [1]=highest
 local MOVE_SPEED = 40 -- hard lock
