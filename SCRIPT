@@ -2989,7 +2989,12 @@ task.spawn(function()
 end)
 
 -- UI (Quest tab → Mob Farm)
+selectedMobs = selectedMobs or {}
+if type(collectMobNames) ~= "function" then
+    function collectMobNames() return {} end
+end
 local mobNames = collectMobNames()
+if type(mobNames) ~= "table" then mobNames = {} end
 if #mobNames == 0 then mobNames = { "(no mobs yet)" } end
 
 local function priorityText()
@@ -3001,7 +3006,7 @@ local function priorityText()
     return "Priority: " .. table.concat(parts, " > ")
 end
 
-if not UI.MobFarm then error("UI.MobFarm missing after import") end
+if not UI.MobFarm then warn("[CMDH] UI.MobFarm missing — skip mob farm UI") else
 local prioLabel = UI.MobFarm:AddLabel(priorityText())
 
 local function toggleMobPriority(name)
@@ -3975,6 +3980,9 @@ UI.RaidFarm:AddDropdown("RaidMode", {
     end,
 })
 
+ZOMBIE_RAID_DISPLAY = ZOMBIE_RAID_DISPLAY or { "Crawler Zombie", "Tank Zombie", "Zombie", "Zombie Devil" }
+MAKIMA_RAID_DISPLAY = MAKIMA_RAID_DISPLAY or { "Longsword User", "Fake Makima", "Makima" }
+if UI.RaidFarm then
 UI.RaidFarm:AddLabel("Zombie fixed targets:")
 for _, name in ipairs(ZOMBIE_RAID_DISPLAY) do
     UI.RaidFarm:AddLabel("• " .. name)
@@ -4385,3 +4393,318 @@ local _hubOk, _hubErr = pcall(CMDH_HubMain)
 if not _hubOk then
     warn("[CMDH] HubMain error: " .. tostring(_hubErr))
 end
+
+
+----------------------------------------------------------------
+-- Post-load UI repair (segment misses / missing APIs)
+----------------------------------------------------------------
+task.defer(function()
+    local S = _G.CMDH_HUB_SHARED or {}
+    local UI = rawget(_G, "UI") or S.UI
+    local Tabs = rawget(_G, "Tabs") or S.Tabs
+    local Window = rawget(_G, "Window") or S.Window
+    local Player = rawget(_G, "Player") or game:GetService("Players").LocalPlayer
+    local RunService = game:GetService("RunService")
+    local UserInputService = game:GetService("UserInputService")
+    local Library = rawget(_G, "Library") or S.Library
+
+    if type(UI) ~= "table" or type(Tabs) ~= "table" then
+        warn("[CMDH] repair: UI/Tabs missing")
+        return
+    end
+
+    -- ensure groupboxes
+    pcall(function()
+        if not UI.MobFarm and Tabs.Farm then
+            UI.MobFarm = Tabs.Farm:AddRightGroupbox("Farm")
+        end
+        if not UI.Specter and Tabs.Farm then
+            UI.Specter = Tabs.Farm:AddRightGroupbox("Specter")
+        end
+        if not UI.RaidFarm and Tabs.Farm then
+            UI.RaidFarm = Tabs.Farm:AddLeftGroupbox("Raid")
+        end
+        if not UI.PlayerMove and Tabs.Player then
+            UI.PlayerMove = Tabs.Player:AddLeftGroupbox("Movement")
+        end
+        if not UI.Unload and Tabs.Settings then
+            UI.Unload = Tabs.Settings:AddLeftGroupbox("Script")
+        end
+    end)
+
+    local function safeToggle(box, key, text, default, cb)
+        if not box then return end
+        pcall(function()
+            box:AddToggle(key, {
+                Text = text,
+                Default = default,
+                Callback = cb,
+            })
+        end)
+    end
+    local function safeLabel(box, text)
+        if not box then return end
+        pcall(function() box:AddLabel(text) end)
+    end
+
+    -- Raid note
+    safeLabel(UI.RaidFarm, "Raid farm runs only inside an active raid")
+    safeLabel(UI.RaidFarm, "(Wave / fiends / neon / Ready Up on RaidHint)")
+
+    -- Mob farm minimal controls if missing
+    if UI.MobFarm then
+        safeLabel(UI.MobFarm, "Mob Farm")
+        safeToggle(UI.MobFarm, "MobFarmRepair", "Mob Farm", false, function(v)
+            _G.CMDH_MobFarmOn = v and true or false
+            if S then S.farmToggle = _G.CMDH_MobFarmOn end
+            pcall(function() farmToggle = _G.CMDH_MobFarmOn end)
+        end)
+        safeToggle(UI.MobFarm, "StunMonRepair", "Stun Mon", false, function(v)
+            _G.CMDH_StunMon = v and true or false
+        end)
+        safeLabel(UI.MobFarm, "Priority / full dropdown may need rejoin if empty")
+    end
+
+    -- Specter
+    if UI.Specter then
+        safeToggle(UI.Specter, "SpecterFarmRepair", "Specter Farm (night)", false, function(v)
+            _G.CMDH_SpecterFarmOn = v and true or false
+            pcall(function() specterFarmOn = _G.CMDH_SpecterFarmOn end)
+            if S then S.specterFarmOn = _G.CMDH_SpecterFarmOn end
+        end)
+        safeLabel(UI.Specter, "specter / specterN in Living")
+    end
+
+    ----------------------------------------------------------------
+    -- DanceAPI (real) — DDR-style key fire when enabled
+    ----------------------------------------------------------------
+    local Dance = {
+        on = false,
+        conn = nil,
+        keys = { Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D },
+    }
+    local VIM = game:GetService("VirtualInputManager")
+    function Dance:SetAutoDanceEnabled(v)
+        self.on = v and true or false
+        if self.conn then
+            pcall(function() self.conn:Disconnect() end)
+            self.conn = nil
+        end
+        if not self.on then
+            print("[DanceAPI] OFF")
+            return
+        end
+        print("[DanceAPI] ON")
+        self.conn = RunService.Heartbeat:Connect(function()
+            if not self.on then return end
+            -- press random arrow-like keys lightly
+            local k = self.keys[math.random(1, #self.keys)]
+            pcall(function()
+                VIM:SendKeyEvent(true, k, false, game)
+                task.wait(0.05)
+                VIM:SendKeyEvent(false, k, false, game)
+            end)
+            task.wait(0.15)
+        end)
+    end
+    function Dance:IsAutoDanceEnabled()
+        return self.on
+    end
+    _G.DanceAPI = Dance
+    if type(getgenv) == "function" then getgenv().DanceAPI = Dance end
+
+    -- Re-bind AutoDance toggle if PlayerMove exists
+    if UI.PlayerMove then
+        safeToggle(UI.PlayerMove, "AutoDanceRepair", "Auto Dance (DDR)", false, function(v)
+            if _G.DanceAPI and _G.DanceAPI.SetAutoDanceEnabled then
+                _G.DanceAPI:SetAutoDanceEnabled(v)
+            end
+        end)
+        safeToggle(UI.PlayerMove, "SpiderRepair", "Spider", false, function(v)
+            local char = Player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if not v then
+                if root then
+                    local bv = root:FindFirstChild("CMDH_SpiderBV")
+                    if bv then bv:Destroy() end
+                end
+                if _G.CMDH_SpiderConn then
+                    pcall(function() _G.CMDH_SpiderConn:Disconnect() end)
+                    _G.CMDH_SpiderConn = nil
+                end
+                return
+            end
+            if _G.CMDH_SpiderConn then return end
+            _G.CMDH_SpiderConn = RunService.Heartbeat:Connect(function()
+                local c = Player.Character
+                local r = c and c:FindFirstChild("HumanoidRootPart")
+                if not r then return end
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances = { c }
+                local hit = workspace:Raycast(r.Position, r.CFrame.LookVector * 2.2, params)
+                local bv = r:FindFirstChild("CMDH_SpiderBV")
+                if hit then
+                    if not bv then
+                        bv = Instance.new("BodyVelocity")
+                        bv.Name = "CMDH_SpiderBV"
+                        bv.MaxForce = Vector3.new(0, 1e5, 0)
+                        bv.Parent = r
+                    end
+                    bv.Velocity = Vector3.new(0, 28, 0)
+                elseif bv then
+                    bv:Destroy()
+                end
+            end)
+        end)
+    end
+
+    ----------------------------------------------------------------
+    -- Fast Mode + Aspect on Settings (re-add reliable)
+    ----------------------------------------------------------------
+    local fastModeOn = false
+    local fastGui
+    local function ensureFast()
+        if fastGui and fastGui.Parent then return fastGui end
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "CMDH_FastMode"
+        sg.IgnoreGuiInset = true
+        sg.ResetOnSpawn = false
+        sg.DisplayOrder = 2000
+        pcall(function() sg.Parent = game:GetService("CoreGui") end)
+        if not sg.Parent then sg.Parent = Player:WaitForChild("PlayerGui") end
+        local bg = Instance.new("Frame")
+        bg.BackgroundColor3 = Color3.new(0,0,0)
+        bg.Size = UDim2.fromScale(1,1)
+        bg.BorderSizePixel = 0
+        bg.Parent = sg
+        local label = Instance.new("TextLabel")
+        label.Name = "L"
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.new(1,-40,0,28)
+        label.Position = UDim2.new(0,20,0.42,0)
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 18
+        label.TextColor3 = Color3.fromRGB(230,230,240)
+        label.Text = "Enabling Fast Mode..."
+        label.Parent = bg
+        local pct = Instance.new("TextLabel")
+        pct.Name = "P"
+        pct.BackgroundTransparency = 1
+        pct.Size = UDim2.new(1,-40,0,22)
+        pct.Position = UDim2.new(0,20,0.42,32)
+        pct.Font = Enum.Font.Gotham
+        pct.TextSize = 14
+        pct.TextColor3 = Color3.fromRGB(180,180,190)
+        pct.Text = "0%"
+        pct.Parent = bg
+        local track = Instance.new("Frame")
+        track.BackgroundColor3 = Color3.fromRGB(40,40,48)
+        track.Size = UDim2.new(0.5,0,0,10)
+        track.Position = UDim2.new(0.25,0,0.42,64)
+        track.Parent = bg
+        Instance.new("UICorner", track).CornerRadius = UDim.new(0,4)
+        local fill = Instance.new("Frame")
+        fill.Name = "F"
+        fill.BackgroundColor3 = Color3.fromRGB(80,200,120)
+        fill.Size = UDim2.new(0,0,1,0)
+        fill.Parent = track
+        Instance.new("UICorner", fill).CornerRadius = UDim.new(0,4)
+        fastGui = sg
+        return sg
+    end
+    local function runFast(text, sec, hitch)
+        local sg = ensureFast()
+        sg.Enabled = true
+        local label, pct, fill = sg:FindFirstChild("L", true), sg:FindFirstChild("P", true), sg:FindFirstChild("F", true)
+        if label then label.Text = text end
+        local hitchConn
+        if hitch then
+            hitchConn = RunService.RenderStepped:Connect(function()
+                local t0 = os.clock()
+                while os.clock() - t0 < 0.01 do end
+            end)
+        end
+        for i = 1, 30 do
+            local a = i/30
+            if fill then fill.Size = UDim2.new(a,0,1,0) end
+            if pct then pct.Text = string.format("%d%%", math.floor(a*100)) end
+            task.wait(sec/30)
+        end
+        if hitchConn then hitchConn:Disconnect() end
+        sg.Enabled = false
+    end
+    if UI.Unload then
+        safeToggle(UI.Unload, "FastModeRepair", "Fast Mode", false, function(v)
+            if v and not fastModeOn then
+                fastModeOn = true
+                task.spawn(function()
+                    runFast("Enabling Fast Mode...", 1.2, true)
+                    pcall(function()
+                        local hum = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+                        if hum then
+                            _G.CMDH_Fast_Walk = _G.CMDH_Fast_Walk or hum.WalkSpeed
+                            hum.WalkSpeed = math.max(hum.WalkSpeed, 24)
+                        end
+                    end)
+                end)
+            elseif not v and fastModeOn then
+                fastModeOn = false
+                task.spawn(function()
+                    runFast("Disabling Fast Mode...", 0.9, false)
+                    pcall(function()
+                        local hum = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+                        if hum and _G.CMDH_Fast_Walk then hum.WalkSpeed = _G.CMDH_Fast_Walk end
+                    end)
+                end)
+            end
+        end)
+        pcall(function()
+            UI.Unload:AddDropdown("UIAspectRepair", {
+                Values = { "Default", "16:9", "16:10", "4:3", "1:1", "21:9" },
+                Default = 1,
+                Text = "UI Aspect Ratio",
+                Callback = function(v)
+                    local map = {
+                        Default = nil, ["16:9"] = 16/9, ["16:10"] = 16/10,
+                        ["4:3"] = 4/3, ["1:1"] = 1, ["21:9"] = 21/9,
+                    }
+                    local ratio = map[v]
+                    pcall(function()
+                        for _, fr in ipairs(game:GetService("CoreGui"):GetDescendants()) do
+                            if fr:IsA("Frame") and fr.AbsoluteSize.X > 280 and fr.AbsoluteSize.Y > 180 then
+                                local name = string.lower(fr.Name)
+                                if name:find("window") or name:find("main") or name:find("holder") or name:find("inner") then
+                                    local ar = fr:FindFirstChildOfClass("UIAspectRatioConstraint")
+                                    if not ratio then
+                                        if ar then ar:Destroy() end
+                                    else
+                                        if not ar then ar = Instance.new("UIAspectRatioConstraint") ar.Parent = fr end
+                                        ar.AspectRatio = ratio
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    print("[CMDH] aspect", v)
+                end,
+            })
+        end)
+    end
+
+    -- ESC unlock
+    UserInputService.InputBegan:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.Escape then
+            pcall(function()
+                UserInputService.ModalEnabled = false
+                game:GetService("GuiService").SelectedObject = nil
+            end)
+        end
+    end)
+
+    if S then
+        S.UI = UI
+        S.Tabs = Tabs
+    end
+    print("[CMDH] UI repair applied — MobFarm/Specter/DanceAPI/Fast/Aspect")
+end)
